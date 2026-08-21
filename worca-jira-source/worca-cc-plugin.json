@@ -1,0 +1,100 @@
+{
+  "name": "jira-source",
+  "version": "1.0.0",
+  "description": "Pull tasks from Jira Server/DC or Jira Cloud via the jtr CLI 0.10+, with optional result write-back",
+  "license": "MIT",
+  "engines": { "worca-cc-api": ">=1 <2" },
+  "taskSources": [
+    {
+      "id": "jira",
+      "displayName": "Jira (jtr)",
+      "module": "./connector/index.mjs",
+      "multiProfile": true,
+      "configSchema": [
+        {
+          "key": "ticketUrl",
+          "type": "text",
+          "required": true,
+          "label": "Sample ticket URL",
+          "help": "Any ticket from your Jira instance, e.g. https://tracker.example.com/jira/browse/PROJ-123 — Connect derives the server address and project key from it."
+        },
+        {
+          "key": "deployment",
+          "type": "select",
+          "default": "auto",
+          "options": ["auto", "server", "cloud"],
+          "label": "Deployment",
+          "help": "auto reads it off the server address (*.atlassian.net is Cloud). Pin it if that guess is wrong — a Cloud tenant on your own domain, or a self-hosted instance on a Cloud-shaped one."
+        },
+        {
+          "key": "authMethod",
+          "type": "select",
+          "default": "auto",
+          "options": ["auto", "sso", "pat", "token"],
+          "label": "Authentication",
+          "help": "auto picks what the deployment accepts: sso for Server/DC, token for Cloud. sso opens a browser (required for SSO-gated trackers); pat is a Server/DC token, headless; token is a Cloud account email + API token."
+        },
+        {
+          "key": "email",
+          "type": "text",
+          "label": "Account email (Cloud)",
+          "help": "Only used when Authentication is token: the Atlassian account the API token belongs to. Ignored on Server/DC."
+        },
+        {
+          "key": "pat",
+          "type": "text",
+          "secret": true,
+          "label": "Token",
+          "help": "A Server/DC personal access token, or a Cloud API token from https://id.atlassian.com/manage-profile/security/api-tokens. Unused with sso. Note: behind an SSO gateway a token alone cannot get through — use sso there."
+        },
+        {
+          "key": "browser",
+          "type": "select",
+          "default": "auto",
+          "options": ["auto", "msedge", "chrome", "chromium"],
+          "label": "SSO browser",
+          "help": "Which installed browser the sign-in opens. Change this if Connect reports that no browser was found."
+        },
+        {
+          "key": "transitionOnComplete",
+          "type": "text",
+          "label": "Transition on completion",
+          "help": "Optional workflow transition or status name (e.g. Done) applied when a run that chose write-back completes successfully. Leave empty to only comment. Transition names are workflow-specific; `jtr transition PROJ-123` lists the valid ones."
+        },
+        {
+          "key": "jtrPath",
+          "type": "text",
+          "default": "jtr",
+          "label": "jtr executable",
+          "help": "Command or absolute path to the jtr CLI. The connector runs with PATH+HOME only — if jtr isn't on the server's PATH, use an absolute path (e.g. /Users/you/.local/bin/jtr)."
+        }
+      ],
+      "inputs": [
+        {
+          "key": "filter",
+          "type": "select",
+          "default": "none",
+          "label": "Filter",
+          "options": [
+            { "value": "none", "label": "None" },
+            { "value": "mine", "label": "Assigned to me" },
+            { "value": "reported-by-me", "label": "Reported by me" },
+            { "value": "updated-week", "label": "Updated this week" }
+          ]
+        },
+        { "key": "jql", "type": "text", "label": "JQL (overrides Filter)" },
+        { "key": "task", "type": "task-browser", "label": "Ticket" },
+        {
+          "key": "writeBack",
+          "type": "select",
+          "default": "no",
+          "label": "Write result back",
+          "options": [
+            { "value": "no", "label": "No" },
+            { "value": "yes", "label": "Yes — comment on the ticket when done" }
+          ]
+        }
+      ]
+    }
+  ]
+}

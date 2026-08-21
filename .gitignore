@@ -1,0 +1,14 @@
+.env
+.jtr/
+.venv/
+__pycache__/
+*.egg-info/
+dist/
+build/
+.ruff_cache/
+.pytest_cache/
+.DS_Store
+.vscode/
+.idea/
+.claude/settings.local.json
+.claude/skills/
