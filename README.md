@@ -195,32 +195,6 @@ Re-running `jtr init` in another project folder installs the same
 skill there. It lives alongside jtr in the package, so
 `uv tool upgrade jtr` keeps it in sync.
 
-## worca-cc integration
-
-[`worca-jira-source/`](worca-jira-source/) is a **worca-cc plugin** that
-pulls Jira tickets into worca's New Pipeline through this CLI. jtr owns
-everything Jira-specific — auth, instance config, the REST dialect — and
-the connector only shells out to `jtr … --json`, so both deployments
-work, including Server/DC behind an SSO gateway.
-
-Setup runs entirely from the plugin's settings pane: paste any ticket
-URL, press **Connect**. Highlights:
-
-- **Multiple profiles** — one install can hold several Jira instances,
-  each with its own token and its own jtr config dir, so sessions are
-  never shared.
-- **Per-run write-back** — a finished pipeline can be posted back onto
-  its ticket as a comment (summary, branch, PR link), with an optional
-  workflow transition (e.g. `Done`) on success.
-- **Ticket → pipeline fast path** — paste a ticket key or browse URL
-  into the task browser and that exact ticket comes back, whatever the
-  filter says.
-
-It's a plugin to link into worca, not part of the installed CLI, and it
-requires **jtr ≥ 0.10.0**. See
-[worca-jira-source/README.md](worca-jira-source/README.md) for setup,
-config, and troubleshooting.
-
 ## Commands
 
 ```
