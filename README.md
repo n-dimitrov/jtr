@@ -6,6 +6,7 @@ A local CLI for daily work with Jira / Track & Release tickets.
 jtr list mine
 jtr search "summary ~ 'release'"
 jtr view PROJ-123
+jtr create "Login page 500s on empty password"
 jtr comment PROJ-123 "Looked into this."
 jtr transition PROJ-123 "In Progress"
 ```
@@ -186,7 +187,7 @@ Code can drive jtr on your behalf — no extra install step.
 - **`/jtr`** — auto-activates when you mention Jira, a ticket key
   (`PROJ-123`), "my tickets", workflow language ("transition", "in
   progress"), or type `/jtr` directly. Claude reads tickets freely
-  (list/search/view) and writes (comment/edit/label/assign/transition)
+  (list/search/view) and writes (create/comment/edit/label/assign/transition)
   through the same preview → confirm → audit pattern as the CLI.
   Writes require your explicit per-turn approval; Claude is
   instructed never to pass `--yes` unsolicited.
@@ -212,7 +213,7 @@ jtr search "<JQL>" [--all] [--project KEY] [--limit N] [--start-at N] [--json]
 jtr view <KEY> [--json]                    header + fields + comments
 jtr create "<summary>" [--project KEY | --parent KEY] [--type NAME]
            [-d "<description>"] [--labels a,b] [--priority NAME]
-           [--assignee <user>] [-f name=value]...
+           [--assignee <user> | me] [-f name=value]...
                                            create a ticket, or a sub-task
 jtr comment <KEY> "<text>"                 add a comment
 jtr edit <KEY> <field> <value>             edit one field (full replace)
