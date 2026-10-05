@@ -39,3 +39,11 @@ jobs:
             --title "$TAG" \
             "$@" \
             dist/*.whl dist/*.tar.gz install.sh install.ps1
+
+  pages:
+    needs: release
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml

@@ -94,33 +94,37 @@ auth logout` deletes it.
 
 ## Install
 
-No GitHub CLI, no tokens, no SSH keys. Download the release zip in your
-browser, extract it, and run the bundled installer — same flow on macOS,
-Linux, and Windows.
-
-1. Download the **Source code (zip)** from the jtr **Releases** page.
-2. Extract it and run the bundled installer:
+One command — it installs [`uv`](https://docs.astral.sh/uv/) if you don't
+have it, then installs the latest jtr release:
 
 ```bash
 # macOS / Linux
-cd jtr-1.0.0        # adjust to the version you downloaded
-./install.sh
+curl -LsSf https://n-dimitrov.github.io/jtr/install.sh | sh
 ```
 
 ```powershell
-# Windows
-cd .\jtr-1.0.0\
-powershell -ExecutionPolicy Bypass -File .\install.ps1
+# Windows (PowerShell)
+irm https://n-dimitrov.github.io/jtr/install.ps1 | iex
 ```
 
-The installer installs `uv` if you don't already have it, then runs
-`uv tool install` on the extracted source.
+The same steps, with copy buttons, are on the
+[landing page](https://n-dimitrov.github.io/jtr/).
 
-To upgrade later: download the newer zip and re-run the installer.
-To remove: `uv tool uninstall jtr`.
+### Update
 
-See [INSTALL.md](INSTALL.md) for the manual (no-installer) steps and
-troubleshooting.
+```bash
+jtr update            # install the latest release, refresh the /jtr skill
+jtr update --check    # only report whether a newer release exists
+```
+
+On Windows a running program can't replace itself, so `jtr update` tells
+you to re-run the installer one-liner instead — that is the upgrade.
+Re-running the installer works as an upgrade on every OS.
+
+To remove jtr: `uv tool uninstall jtr`.
+
+No network access to GitHub from your shell, or want a pinned version?
+See [INSTALL.md](INSTALL.md) for the download-and-run flow.
 
 ## First-run setup
 
@@ -159,7 +163,7 @@ jtr init --base-url https://tracker.example.com/jira \
 | `--force` | Update an existing `./.jtr/` in place instead of failing. |
 | `--timeout <s>` | Seconds to wait for SSO (default 300). |
 | `--no-gitignore` | Don't append `.jtr/` to `./.gitignore`. |
-| `--no-skills` | Don't install the bundled `/jtr` Claude Code skill. |
+| `--no-skills` | Don't install (or refresh) the bundled `/jtr` Claude Code skill. |
 | `--bare` | Config only — implies `--no-gitignore --no-skills`. |
 | `--dir <path>` | Initialize `<path>/.jtr/` instead of the cwd's. |
 | `--json` | Emit the resulting config as JSON, and never prompt. See [Driving jtr from another tool](#driving-jtr-from-another-tool). |
@@ -192,9 +196,20 @@ Code can drive jtr on your behalf — no extra install step.
   Writes require your explicit per-turn approval; Claude is
   instructed never to pass `--yes` unsolicited.
 
-Re-running `jtr init` in another project folder installs the same
-skill there. It lives alongside jtr in the package, so
-`uv tool upgrade jtr` keeps it in sync.
+The skill can live in two places:
+
+```bash
+jtr skill install             # this project:   ./.claude/skills/jtr
+jtr skill install --global    # every project:  ~/.claude/skills/jtr
+jtr skill status              # where it is, and whether each copy is current
+jtr skill update              # refresh the copies that exist
+```
+
+The skill ships inside the jtr package, so a copy written by an older jtr
+goes stale when jtr is upgraded. `jtr update` (and the installer) refresh
+this project's copy and the global one; `jtr init` and `jtr skill update`
+do the same for the project you run them in. A copy you have edited is
+reported as `modified` and never overwritten without `--force`.
 
 ## Commands
 
@@ -204,6 +219,10 @@ jtr init [<ticket-url>] [--ticket <url>] [--base-url <url>] [--project KEY]
          [--no-auth] [--force] [--no-gitignore] [--no-skills] [--bare]
          [--dir <path>] [--json]           set up project-local config + auth
 jtr reset [--yes] [--json]                 delete all jtr-managed data (active dir)
+jtr update [--check] [--json]              update jtr and refresh the /jtr skill
+jtr skill install [--global] [--force] [--json]   install/refresh the Claude Code skill
+jtr skill update [--json]                  refresh existing skill copies
+jtr skill status [--json]                  where the skill is installed, and its state
 jtr whoami [--json]                        print authenticated user
 jtr projects [--json]                      projects you can see (for a picker)
 jtr issuetypes [<PROJECT>] [--json]        issue types a project uses
@@ -541,6 +560,9 @@ src/jtr/
   views.py      Rich renderers + JSON printers for tables / detail view
   safety.py     preview / confirm / audit wrapper used by every write
   audit.py      .jtr_audit.jsonl append-only log
+  skills.py     install / refresh the bundled /jtr Claude Code skill
+  update.py     find and install newer releases (jtr update)
+site/           landing page, published to GitHub Pages with each release
 worca-jira-source/
                 worca-cc plugin: Jira source connector driving this CLI
 ```
