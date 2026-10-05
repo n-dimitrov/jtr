@@ -357,7 +357,10 @@ class JiraClient:
         )
 
     def get_transitions(self, key: str) -> list[Transition]:
-        data = self._get(self._api(f"/issue/{key}/transitions"))
+        data = self._get(
+            self._api(f"/issue/{key}/transitions"),
+            params={"expand": "transitions.fields"},
+        )
         return [Transition.from_api(t) for t in data.get("transitions", [])]
 
     def do_transition(
@@ -365,8 +368,12 @@ class JiraClient:
         key: str,
         transition_id: str,
         comment: str | None = None,
+        fields: dict | None = None,
     ) -> None:
+        """`fields` are the ones the transition's screen takes, e.g. resolution."""
         body: dict = {"transition": {"id": transition_id}}
+        if fields:
+            body["fields"] = fields
         if comment:
             body["update"] = {"comment": [{"add": {"body": comment}}]}
         self._send(

@@ -54,14 +54,23 @@ class Transition:
     id: str
     name: str
     to_status: str
+    # What the transition's screen asks for, when Jira was asked to say
+    # (`expand=transitions.fields`): the ids of its required fields, and
+    # the resolutions it accepts if resolution is on the screen at all.
+    required_fields: list[str] = field(default_factory=list)
+    resolutions: list[str] = field(default_factory=list)
 
     @classmethod
     def from_api(cls, data: dict) -> Transition:
         to = data.get("to") or {}
+        fields = data.get("fields") or {}
+        allowed = (fields.get("resolution") or {}).get("allowedValues") or []
         return cls(
             id=data.get("id", ""),
             name=data.get("name", "") or "",
             to_status=to.get("name", "") or "",
+            required_fields=[k for k, v in fields.items() if (v or {}).get("required")],
+            resolutions=[r.get("name", "") for r in allowed if r.get("name")],
         )
 
 

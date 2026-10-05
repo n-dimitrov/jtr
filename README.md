@@ -218,7 +218,8 @@ jtr comment <KEY> "<text>"                 add a comment
 jtr edit <KEY> <field> <value>             edit one field (full replace)
 jtr label add | remove <KEY> <name>        single-label add/remove (idempotent)
 jtr assign <KEY> <user> | me | --unassign  set/clear the assignee
-jtr transition <KEY> [<status>] [-m "..."] move through workflow
+jtr transition <KEY> [<status>] [-m "..."] [--resolution NAME] [-f name=value]...
+                                           move through workflow / close
 jtr auth [--method sso|pat] [--json]       authenticate with the saved method
 jtr auth pat | sso [--json]                set / refresh credentials
 jtr auth logout [--cookies | --pat] [--json]  clear both (default), or just one
@@ -239,7 +240,7 @@ state and no API call was made):
 ```json
 {"ts":"2026-06-14T09:12:33+00:00","action":"transition","key":"PROJ-123",
  "ok":true,"before":{"status":"Open"},
- "after":{"status":"In Progress","transition_id":"21","comment":null},
+ "after":{"status":"In Progress","transition_id":"21","comment":null,"fields":null},
  "result":null}
 ```
 
@@ -260,6 +261,13 @@ call if the label is already in the desired state).
 For transitions, `jtr transition <KEY>` (no status arg) lists the
 available transitions on that ticket. Match is on the transition name
 or its target status, case-insensitive, partial OK if unambiguous.
+
+Closing a ticket is a transition like any other, but its screen often
+requires a resolution: `jtr transition <KEY> Closed --resolution Fixed`.
+The listing shows what each transition requires, and `-f name=value`
+(repeatable, JSON values sent as JSON) sets any other field it asks for.
+Asking for the status the ticket is already in is a no-op (`changed:
+false`); asking for one no transition leads to is an error.
 
 ### Creating tickets and sub-tasks
 
@@ -329,7 +337,7 @@ Shapes:
 - init / auth / config show / base-url / project → the config state below
 - writes        → the audit row that was appended, plus `changed`
 - create        → the audit row, plus `changed`, `created` (new key) and `url`
-- `transition <KEY>` with no status → `{"key", "transitions": [{"id", "name", "to_status"}]}`
+- `transition <KEY>` with no status → `{"key", "transitions": [{"id", "name", "to_status", "required_fields", "resolutions"}]}`
 - reset         → `{"config_dir", "removed": [...], "folder_removed"}`
 
 Config state (returned by `init`, the `auth` commands, and every

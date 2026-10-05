@@ -184,7 +184,13 @@ jtr transition PROJ-123                       # list what's available
 jtr transition PROJ-123 "In Progress"
 jtr transition PROJ-123 progress              # partial match if unambiguous
 jtr transition PROJ-123 "Done" -m "Fixed in PR #842."   # transition + comment
+jtr transition PROJ-123 Closed --resolution Fixed       # close, with a resolution
+jtr transition PROJ-123 Closed -r "Won't Fix" -m "Out of scope."
 ```
+
+The listing's "Requires" column shows the fields a transition's screen
+demands; set resolution with `--resolution`, anything else with
+`-f name=value`.
 
 Match is case-insensitive on the transition name **or** the target
 status. Ambiguous matches print the candidates and exit non-zero.
