@@ -100,7 +100,7 @@ jtr edit <KEY> <field> <value> --yes             # full replace
 jtr label add|remove <KEY> <name> --yes          # idempotent single-label
 jtr assign <KEY> <user>|me --yes   |  jtr assign <KEY> --unassign --yes
 jtr transition <KEY>                             # NO --yes — lists what's available
-jtr transition <KEY> "<status>" [-m "msg"] --yes
+jtr transition <KEY> "<status>" [-m "msg"] [--resolution NAME] [-f name=value]... --yes
 ```
 
 All of these accept `--json`, which returns the audit row that was
@@ -151,6 +151,8 @@ require knowing the rest of the list.
 - `jtr transition <KEY>` with no status arg lists the transitions available **from the current state of that specific ticket** — workflow state determines what's exposed.
 - Match is case-insensitive on transition name OR target status; partial OK if unambiguous. Ambiguous prints candidates and exits non-zero.
 - `-m "msg"` adds a comment with the transition in a single audited action.
+- **Closing a ticket**: list first — each transition reports `required_fields` and, when resolution is on its screen, the allowed `resolutions`. Pass `--resolution "<name>"` (ask the user which one; don't pick) and `-f name=value` for any other required field.
+- Requesting the status the ticket is already in returns `changed: false`; a status nothing leads to is `no_transition_match`, never a silent success.
 
 ## Auth & config
 
@@ -241,7 +243,7 @@ Success shapes:
 | `init` / `auth` / `config show / base-url / project / deployment` | `{"mode", "config_dir", "env_file", "session_file", "audit_log", "base_url", "deployment", "api_version", "project", "pat_set", "email", "auth_method"}` (setters return the *new* state; `init`/`auth` add `gitignore_updated`, `skills_installed`, `authenticated`) |
 | writes (`comment`/`edit`/`label`/`assign`/`transition`) | the audit row: `{ts, action, key, ok, before, after, result, changed}` |
 | `create` | the audit row (`key` is the parent or project it was filed under), plus `changed`, `created` (the new ticket key) and `url` |
-| `transition <KEY>` (no status) | `{"key", "transitions": [{"id", "name", "to_status"}]}` |
+| `transition <KEY>` (no status) | `{"key", "transitions": [{"id", "name", "to_status", "required_fields", "resolutions"}]}` |
 
 Error shape (any `--json` command on failure):
 ```json

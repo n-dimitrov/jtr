@@ -1779,6 +1779,21 @@ def cmd_transition(
     comment: str | None = typer.Option(
         None, "--comment", "-m", help="Optional comment to add with the transition."
     ),
+    resolution: str | None = typer.Option(
+        None,
+        "--resolution",
+        "-r",
+        help="Resolution name (e.g. Fixed), for transitions that close a ticket.",
+    ),
+    field: list[str] | None = typer.Option(  # noqa: B008 - list type hides it
+        None,
+        "--field",
+        "-f",
+        help=(
+            "Any other field the transition requires, as name=value, "
+            "repeatable. JSON values are sent as JSON."
+        ),
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
     json_out: bool = typer.Option(
         False, "--json", help="Emit the audit row (or the transition list) as JSON."
@@ -1788,29 +1803,37 @@ def cmd_transition(
 
     Without a status argument, prints the available transitions.
     """
+    fields = _parse_extra_fields(field or [], json_out=json_out)
+    if resolution and resolution.strip():
+        fields = {"resolution": {"name": resolution.strip()}, **fields}
 
     def go(jc: JiraClient) -> dict | None:
         transitions = jc.get_transitions(key)
-        if not transitions:
-            if json_out:
-                return {"key": key, "transitions": []}
-            console.print(f"[yellow]No transitions available on[/] {key}.")
-            return None
 
         if not status.strip():
             if json_out:
                 return {
                     "key": key,
                     "transitions": [
-                        {"id": tr.id, "name": tr.name, "to_status": tr.to_status}
+                        {
+                            "id": tr.id,
+                            "name": tr.name,
+                            "to_status": tr.to_status,
+                            "required_fields": tr.required_fields,
+                            "resolutions": tr.resolutions,
+                        }
                         for tr in transitions
                     ],
                 }
+            if not transitions:
+                console.print(f"[yellow]No transitions available on[/] {key}.")
+                return None
             t = Table(title=f"Transitions for {key}", show_header=True)
             t.add_column("Name", style="bold")
             t.add_column("→ Status")
+            t.add_column("Requires")
             for tr in transitions:
-                t.add_row(tr.name, tr.to_status)
+                t.add_row(tr.name, tr.to_status, ", ".join(tr.required_fields))
             console.print(t)
             return None
 
@@ -1818,11 +1841,22 @@ def cmd_transition(
         if match is None:
             names = ", ".join(f"'{x.name}'" for x in (candidates or transitions))
             if not candidates:
+                # Asked to move somewhere and nothing leads there: either the
+                # ticket is already there, or the caller must be told — a
+                # clean exit here would read as "done" to a script.
+                current = jc.get_issue(key).status
+                if current.lower() == status.strip().lower():
+                    if not json_out:
+                        console.print(
+                            f"[yellow]No change[/] — {key} is already "
+                            f"[bold]{current}[/]."
+                        )
+                    return _unchanged("transition", key, before={"status": current})
                 _fail(
                     "no_transition_match",
-                    f"No transition matches '{status}'.",
+                    f"No transition matches '{status}' from status '{current}'.",
                     json_out=json_out,
-                    fix=f"Available: {names}.",
+                    fix=f"Available: {names}." if names else None,
                 )
             _fail(
                 "ambiguous_transition",
@@ -1840,25 +1874,43 @@ def cmd_transition(
         preview_text.append(match.to_status or match.name, style="green")
         preview_text.append(f"\n(via transition '{match.name}', id={match.id})",
                             style="dim")
+        for name, value in fields.items():
+            shown = value["name"] if name == "resolution" else json.dumps(
+                value, ensure_ascii=False
+            )
+            preview_text.append(f"\n{name}: ", style="bold")
+            preview_text.append(shown, style="green")
         if comment:
             preview_text.append("\n\nComment: ", style="bold")
             preview_text.append(comment)
 
-        row = safety.confirm_apply(
-            _write_console(json_out),
-            action="transition",
-            key=key,
-            preview=preview_text,
-            apply_fn=lambda: jc.do_transition(key, match.id, comment=comment),
-            before={"status": old},
-            after={
-                "status": match.to_status or match.name,
-                "transition_id": match.id,
-                "comment": comment,
-            },
-            assume_yes=yes,
-            quiet=json_out and yes,
-        )
+        try:
+            row = safety.confirm_apply(
+                _write_console(json_out),
+                action="transition",
+                key=key,
+                preview=preview_text,
+                apply_fn=lambda: jc.do_transition(
+                    key, match.id, comment=comment, fields=fields
+                ),
+                before={"status": old},
+                after={
+                    "status": match.to_status or match.name,
+                    "transition_id": match.id,
+                    "comment": comment,
+                    "fields": fields or None,
+                },
+                assume_yes=yes,
+                quiet=json_out and yes,
+            )
+        except JiraError as e:
+            # A 400 naming fields is the transition's screen demanding them.
+            if e.status == 400 and e.payload.get("errors"):
+                fix = "Set them with --resolution <name> or -f <name>=<value>."
+                if match.resolutions:
+                    fix += f" Resolutions: {', '.join(match.resolutions)}."
+                _fail("jira_error", str(e), json_out=json_out, fix=fix)
+            raise
         if not json_out:
             console.print(
                 f"[green]Transitioned[/] {key} → {match.to_status or match.name}"

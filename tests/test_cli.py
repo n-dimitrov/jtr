@@ -348,3 +348,141 @@ def test_issuetypes_lists_them_as_json(monkeypatch):
     assert payload["issue_types"][2] == {
         "id": "5", "name": "Sub-task", "subtask": True, "description": "",
     }
+
+
+# -- transition ---------------------------------------------------------
+
+TRANSITIONS = [
+    {"id": "11", "name": "Start Progress", "to": {"name": "In Progress"}},
+    {
+        "id": "21",
+        "name": "Close Issue",
+        "to": {"name": "Closed"},
+        "fields": {
+            "resolution": {
+                "required": True,
+                "allowedValues": [{"name": "Fixed"}, {"name": "Won't Fix"}],
+            },
+            "customfield_9": {"required": False},
+        },
+    },
+]
+
+
+def stub_workflow(monkeypatch, *, status="Open", transitions=TRANSITIONS, post=None):
+    """A fake Jira with one ticket, P-1; returns the POSTed transition bodies."""
+    import httpx
+
+    from jtr.client import JiraClient
+    from jtr.dialect import Dialect
+
+    posted: list[dict] = []
+    seen = {}
+
+    def handler(request):
+        if request.method == "POST":
+            posted.append(json.loads(request.content))
+            return post or httpx.Response(204)
+        if request.url.path.endswith("/transitions"):
+            seen["expand"] = request.url.params.get("expand")
+            return httpx.Response(200, json={"transitions": transitions})
+        return httpx.Response(
+            200, json={"key": "P-1", "fields": {"status": {"name": status}}}
+        )
+
+    def from_session():
+        http = httpx.Client(base_url=SERVER_URL, transport=httpx.MockTransport(handler))
+        return JiraClient(http, Dialect.resolve(SERVER_URL))
+
+    monkeypatch.setattr("jtr.cli.JiraClient.from_session", from_session)
+    configure(SERVER_URL, **{config.KEY_PAT: "t"})
+    posted.append(seen)
+    return posted
+
+
+def test_transition_posts_the_matching_transition(monkeypatch):
+    seen, *posted = stub_workflow(monkeypatch)
+    r = run("transition", "P-1", "in progress", "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.stdout)
+    assert payload["before"] == {"status": "Open"}
+    assert payload["after"]["status"] == "In Progress"
+    assert payload["after"]["fields"] is None
+
+
+def test_transition_sends_only_the_transition_by_default(monkeypatch):
+    posted = stub_workflow(monkeypatch)
+    assert run("transition", "P-1", "progress", "-m", "on it", "--yes").exit_code == 0
+    assert posted[1:] == [{
+        "transition": {"id": "11"},
+        "update": {"comment": [{"add": {"body": "on it"}}]},
+    }]
+
+
+def test_close_sends_resolution_and_extra_fields(monkeypatch):
+    posted = stub_workflow(monkeypatch)
+    r = run("transition", "P-1", "Closed", "--resolution", "Fixed",
+            "-f", 'customfield_9={"value": "x"}', "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    assert posted[1:] == [{
+        "transition": {"id": "21"},
+        "fields": {"resolution": {"name": "Fixed"}, "customfield_9": {"value": "x"}},
+    }]
+    assert json.loads(r.stdout)["after"]["fields"]["resolution"] == {"name": "Fixed"}
+
+
+def test_close_without_a_required_resolution_says_how_to_give_one(monkeypatch):
+    import httpx
+
+    stub_workflow(monkeypatch, post=httpx.Response(
+        400, json={"errors": {"resolution": "Resolution is required."}}
+    ))
+    r = run("transition", "P-1", "Closed", "--yes", "--json")
+    assert r.exit_code != 0
+    payload = json.loads(r.stdout)
+    assert payload["error"] == "jira_error"
+    assert "--resolution" in payload["fix"]
+    assert "Fixed, Won't Fix" in payload["fix"]
+
+
+def test_transition_list_reports_what_each_one_requires(monkeypatch):
+    seen, *_ = stub_workflow(monkeypatch)
+    r = run("transition", "P-1", "--json")
+    assert r.exit_code == 0, r.output
+    assert seen["expand"] == "transitions.fields"
+    close = json.loads(r.stdout)["transitions"][1]
+    assert close == {
+        "id": "21",
+        "name": "Close Issue",
+        "to_status": "Closed",
+        "required_fields": ["resolution"],
+        "resolutions": ["Fixed", "Won't Fix"],
+    }
+
+
+def test_transition_to_the_current_status_is_a_no_op(monkeypatch):
+    posted = stub_workflow(monkeypatch, status="Closed", transitions=[])
+    r = run("transition", "P-1", "closed", "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.stdout)
+    assert payload["changed"] is False
+    assert payload["before"] == {"status": "Closed"}
+    assert posted[1:] == []
+
+
+def test_transition_with_nowhere_to_go_is_an_error_not_a_success(monkeypatch):
+    """Exiting 0 here would tell a script the ticket was closed."""
+    posted = stub_workflow(monkeypatch, status="Resolved", transitions=[])
+    r = run("transition", "P-1", "Closed", "--yes", "--json")
+    assert r.exit_code != 0
+    payload = json.loads(r.stdout)
+    assert payload["error"] == "no_transition_match"
+    assert "'Resolved'" in payload["message"]
+    assert posted[1:] == []
+
+
+def test_transition_list_is_empty_but_fine_when_there_are_none(monkeypatch):
+    stub_workflow(monkeypatch, transitions=[])
+    r = run("transition", "P-1", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout) == {"key": "P-1", "transitions": []}
