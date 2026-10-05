@@ -6,10 +6,12 @@ Cloud/Server split lives in the difference between those requests.
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
-from jtr.client import AmbiguousUser, JiraClient, UserNotFound
+from jtr.client import AmbiguousUser, JiraClient, JiraError, UserNotFound
 from jtr.dialect import Dialect
 
 SERVER_URL = "https://tracker.example.com/jira"
@@ -306,3 +308,55 @@ def test_401_raises_session_expired_with_deployment_specific_fix():
 
     with pytest.raises(auth.SessionExpired, match="jtr auth pat"):
         make_client(handler).myself()
+
+
+# -- Create ------------------------------------------------------------
+
+
+def test_issue_types_reads_them_off_the_project():
+    def handler(request):
+        assert request.url.path.endswith("/rest/api/2/project/PROJ")
+        return json_response({
+            "key": "PROJ",
+            "issueTypes": [
+                {"id": "3", "name": "Task", "subtask": False},
+                {"id": "5", "name": "Sub-task", "subtask": True},
+            ],
+        })
+
+    types = make_client(handler).issue_types("PROJ")
+    assert [(t.id, t.name, t.subtask) for t in types] == [
+        ("3", "Task", False),
+        ("5", "Sub-task", True),
+    ]
+
+
+@pytest.mark.parametrize("url", [SERVER_URL, CLOUD_URL])
+def test_create_issue_posts_fields_and_returns_key(url):
+    seen = {}
+
+    def handler(request):
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return json_response({"id": "10001", "key": "PROJ-7"}, status=201)
+
+    fields = {"project": {"key": "PROJ"}, "summary": "S", "issuetype": {"id": "3"}}
+    assert make_client(handler, url=url).create_issue(fields) == "PROJ-7"
+    assert seen["method"] == "POST"
+    assert seen["path"].endswith("/rest/api/2/issue")
+    assert seen["body"] == {"fields": fields}
+
+
+def test_create_issue_is_not_retried_on_failure():
+    """A create that is sent twice makes two tickets."""
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return json_response({"errors": {"customfield_1": "Required."}}, status=400)
+
+    with pytest.raises(JiraError) as e:
+        make_client(handler).create_issue({"summary": "S"})
+    assert len(calls) == 1
+    assert e.value.payload["errors"] == {"customfield_1": "Required."}

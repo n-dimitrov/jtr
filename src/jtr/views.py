@@ -9,7 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .models import Comment, Project, SearchPage, Ticket
+from .models import Comment, IssueType, Project, SearchPage, Ticket
 
 
 def _short_date(s: str) -> str:
@@ -146,6 +146,29 @@ def print_projects_json(projects: list[Project]) -> None:
     print_json({
         "count": len(projects),
         "projects": [asdict(p) for p in projects],
+    })
+
+
+def render_issue_type_table(
+    console: Console, project: str, types: list[IssueType]
+) -> None:
+    if not types:
+        console.print(f"[dim]No issue types on {project}.[/]")
+        return
+    t = Table(title=f"Issue types for {project}", header_style="bold")
+    t.add_column("Name", style="bold")
+    t.add_column("Sub-task")
+    t.add_column("Description")
+    for it in types:
+        t.add_row(it.name, "yes" if it.subtask else "[dim]—[/]", it.description)
+    console.print(t)
+
+
+def print_issue_types_json(project: str, types: list[IssueType]) -> None:
+    print_json({
+        "project": project,
+        "count": len(types),
+        "issue_types": [asdict(t) for t in types],
     })
 
 

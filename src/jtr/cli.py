@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -1120,6 +1121,38 @@ def cmd_projects(
     views.render_project_table(console, projects)
 
 
+@app.command("issuetypes")
+def cmd_issuetypes(
+    project: str | None = typer.Argument(
+        None, help="Project key. Defaults to JTR_PROJECT."
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON to stdout."),
+):
+    """List a project's issue types — what `jtr create --type` accepts."""
+    proj = _resolve_project(project, False)
+    if not proj:
+        _fail(
+            "invalid_input",
+            "No project given and JTR_PROJECT is not set.",
+            json_out=json_out,
+            fix="jtr issuetypes <PROJECT>",
+        )
+    try:
+        _ensure_creds()
+        with JiraClient.from_session() as jc:
+            types = jc.issue_types(proj)
+    except auth.SessionExpired as e:
+        _handle_expired(e, json_out=json_out)
+        return
+    except JiraError as e:
+        _handle_jira_error(e, json_out=json_out)
+        return
+    if json_out:
+        views.print_issue_types_json(proj, types)
+        return
+    views.render_issue_type_table(console, proj, types)
+
+
 @app.command("view")
 def view(
     key: str = typer.Argument(..., help="Ticket key (e.g. PROJ-123)."),
@@ -1325,6 +1358,26 @@ def cmd_edit(
     _run_write(f"edit:{field}", key, go, json_out=json_out, assume_yes=yes)
 
 
+def _resolve_user(jc: JiraClient, requested: str, *, json_out: bool) -> str:
+    """`resolve_assignee`, with its two failures turned into CLI errors."""
+    try:
+        return jc.resolve_assignee(requested)
+    except AmbiguousUser as e:
+        _fail(
+            "ambiguous_user",
+            str(e),
+            json_out=json_out,
+            fix="Use the exact email, or pass the accountId with --account-id.",
+        )
+    except UserNotFound as e:
+        _fail(
+            "user_not_found",
+            str(e),
+            json_out=json_out,
+            fix="Check the spelling, or pass an accountId with --account-id.",
+        )
+
+
 @app.command("assign")
 def cmd_assign(
     key: str = typer.Argument(..., help="Ticket key."),
@@ -1361,22 +1414,7 @@ def cmd_assign(
         if requested is None or account_id:
             target = requested
         else:
-            try:
-                target = jc.resolve_assignee(requested)
-            except AmbiguousUser as e:
-                _fail(
-                    "ambiguous_user",
-                    str(e),
-                    json_out=json_out,
-                    fix="Use the exact email, or pass the accountId with --account-id.",
-                )
-            except UserNotFound as e:
-                _fail(
-                    "user_not_found",
-                    str(e),
-                    json_out=json_out,
-                    fix="Check the spelling, or pass an accountId with --account-id.",
-                )
+            target = _resolve_user(jc, requested, json_out=json_out)
         # Compare on whatever field this deployment identifies people by —
         # on Cloud the assignee has no `name`, so comparing names would make
         # every assignment look like a change.
@@ -1500,6 +1538,215 @@ def cmd_label_remove(
         return _applied(row)
 
     _run_write("label:remove", key, go, json_out=json_out, assume_yes=yes)
+
+
+# What Jira calls its stock sub-task type: "Sub-task" on Server/DC and
+# company-managed Cloud projects, "Subtask" on team-managed ones.
+_SUBTASK_NAMES = ("sub-task", "subtask")
+_DEFAULT_ISSUE_TYPE = "task"
+
+
+def _pick_issue_type(types, wanted: str | None, *, subtask: bool):
+    """Choose the issue type to create; returns (match, candidates).
+
+    Only types of the right kind are candidates: Jira rejects a sub-task
+    type without a parent and a standard type with one. With no `--type`,
+    a standard issue defaults to Task, and a sub-task to the project's
+    sub-task type when there is no doubt which one that is.
+    """
+    pool = [t for t in types if t.subtask == subtask]
+    if wanted and wanted.strip():
+        w = wanted.strip().lower()
+        hits = [t for t in pool if t.name.lower() == w]
+        return (hits[0] if hits else None), pool
+    if subtask and len(pool) == 1:
+        return pool[0], pool
+    defaults = _SUBTASK_NAMES if subtask else (_DEFAULT_ISSUE_TYPE,)
+    hits = [t for t in pool if t.name.lower() in defaults]
+    return (hits[0] if len(hits) == 1 else None), pool
+
+
+def _parse_extra_fields(pairs: list[str], *, json_out: bool) -> dict:
+    """`--field name=value` pairs → a Jira fields dict.
+
+    A value that parses as JSON is sent as JSON, because select, number
+    and user fields need objects or numbers, not strings; anything else
+    goes through as plain text.
+    """
+    out: dict = {}
+    for raw in pairs:
+        name, sep, value = raw.partition("=")
+        name = name.strip()
+        if not sep or not name:
+            _fail(
+                "invalid_input",
+                f"--field expects name=value, got '{raw}'.",
+                json_out=json_out,
+            )
+        try:
+            out[name] = json.loads(value)
+        except ValueError:
+            out[name] = value
+    return out
+
+
+@app.command("create")
+def cmd_create(
+    summary: str = typer.Argument(..., help="Summary (title) of the new ticket."),
+    project: str | None = typer.Option(
+        None, "--project", help="Project key. Defaults to JTR_PROJECT."
+    ),
+    parent: str | None = typer.Option(
+        None, "--parent", help="Parent ticket key — creates a sub-task under it."
+    ),
+    issue_type: str | None = typer.Option(
+        None,
+        "--type",
+        "-t",
+        help=(
+            "Issue type name (see `jtr issuetypes`). Defaults to Task, or to "
+            "the project's sub-task type with --parent."
+        ),
+    ),
+    description: str | None = typer.Option(None, "--description", "-d"),
+    labels: str | None = typer.Option(None, "--labels", help="Comma-separated."),
+    priority: str | None = typer.Option(None, "--priority", help="Priority name."),
+    assignee: str | None = typer.Option(
+        None,
+        "--assignee",
+        help="Server/DC: username. Cloud: email, display name, or accountId.",
+    ),
+    field: list[str] | None = typer.Option(  # noqa: B008 - list type hides it
+        None,
+        "--field",
+        "-f",
+        help=(
+            "Any other field as name=value, repeatable — e.g. a required "
+            "custom field. JSON values are sent as JSON."
+        ),
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+    json_out: bool = typer.Option(
+        False, "--json", help="Emit the audit row as JSON to stdout."
+    ),
+):
+    """Create a ticket, or a sub-task with --parent (preview → confirm → POST).
+
+    Not idempotent: running it twice creates two tickets.
+    """
+    title = summary.strip()
+    if not title:
+        _fail("invalid_input", "Empty summary.", json_out=json_out)
+    parent_key = (parent or "").strip() or None
+    extra = _parse_extra_fields(field or [], json_out=json_out)
+    proj = _resolve_project(project, False)
+    if not parent_key and not proj:
+        _fail(
+            "invalid_input",
+            "No project given and JTR_PROJECT is not set.",
+            json_out=json_out,
+            fix="Pass --project <KEY>, or --parent <KEY> for a sub-task.",
+        )
+    # The audit row needs a key before the ticket has one: file it under
+    # the parent or the project, and let `result` carry the new key.
+    target = parent_key or proj
+
+    def go(jc: JiraClient) -> dict:
+        project_key = proj
+        if parent_key:
+            # A sub-task always lives in its parent's project.
+            project_key = jc.get_issue(parent_key).project_key
+            if project and project_key.lower() != project.strip().lower():
+                _fail(
+                    "invalid_input",
+                    f"{parent_key} is in project {project_key}, not {project}.",
+                    json_out=json_out,
+                    fix="Drop --project; a sub-task goes in its parent's project.",
+                )
+        kind = "sub-task" if parent_key else "issue"
+        match, candidates = _pick_issue_type(
+            jc.issue_types(project_key), issue_type, subtask=bool(parent_key)
+        )
+        if match is None:
+            names = ", ".join(f"'{t.name}'" for t in candidates) or "none"
+            if issue_type and issue_type.strip():
+                msg = f"{project_key} has no {kind} type named '{issue_type}'."
+            else:
+                msg = f"Can't tell which {kind} type to use on {project_key}."
+            _fail(
+                "unknown_issue_type",
+                msg,
+                json_out=json_out,
+                fix=f"Pass --type. Available {kind} types: {names}.",
+            )
+
+        fields: dict = {
+            "project": {"key": project_key},
+            "summary": title,
+            "issuetype": {"id": match.id},
+        }
+        if parent_key:
+            fields["parent"] = {"key": parent_key}
+        if description:
+            fields["description"] = description
+        if labels:
+            fields["labels"] = _csv_list(labels)
+        if priority:
+            fields["priority"] = {"name": priority}
+        if assignee and assignee.strip():
+            fields["assignee"] = jc.dialect.assignee_payload(
+                _resolve_user(jc, assignee.strip(), json_out=json_out)
+            )
+        fields.update(extra)
+
+        preview = Text()
+        shown = {
+            "Project": project_key,
+            "Parent": parent_key,
+            "Type": match.name,
+            "Summary": title,
+            "Description": description,
+            "Labels": ", ".join(_csv_list(labels)) if labels else None,
+            "Priority": priority,
+            "Assignee": assignee,
+            **{k: json.dumps(v, ensure_ascii=False) for k, v in extra.items()},
+        }
+        for label, value in shown.items():
+            if value:
+                if preview:
+                    preview.append("\n")
+                preview.append(f"{label}: ", style="bold")
+                preview.append(str(value), style="green")
+
+        try:
+            row = safety.confirm_apply(
+                _write_console(json_out),
+                action="create",
+                key=target,
+                preview=preview,
+                apply_fn=lambda: jc.create_issue(fields),
+                after=fields,
+                assume_yes=yes,
+                quiet=json_out and yes,
+            )
+        except JiraError as e:
+            # A 400 naming fields is almost always the project demanding
+            # something this command has no dedicated flag for.
+            if e.status == 400 and e.payload.get("errors"):
+                _fail(
+                    "jira_error",
+                    str(e),
+                    json_out=json_out,
+                    fix="Set the fields Jira names with --field <name>=<value>.",
+                )
+            raise
+        new_key = row.get("result") or ""
+        url = f"{jc.base_url}/browse/{new_key}" if new_key else ""
+        if not json_out:
+            console.print(f"[green]Created[/] {new_key}  [dim]{url}[/]")
+        return {**_applied(row), "created": new_key, "url": url}
+
+    _run_write("create", target, go, json_out=json_out, assume_yes=yes)
 
 
 def _match_transition(transitions, target: str):

@@ -6,7 +6,7 @@ import httpx
 
 from . import auth
 from .dialect import Dialect
-from .models import Comment, Project, SearchPage, Ticket, Transition
+from .models import Comment, IssueType, Project, SearchPage, Ticket, Transition
 
 DEFAULT_LIST_FIELDS = [
     "summary",
@@ -63,6 +63,10 @@ class JiraClient:
     def from_session(cls) -> JiraClient:
         http, dialect = auth.session()
         return cls(http, dialect)
+
+    @property
+    def base_url(self) -> str:
+        return str(self._http.base_url).rstrip("/")
 
     def close(self) -> None:
         self._http.close()
@@ -225,6 +229,16 @@ class JiraClient:
                 return out
             start += len(rows)
 
+    def issue_types(self, project_key: str) -> list[IssueType]:
+        """Issue types a project uses, sub-task types included.
+
+        Read off the project itself rather than `createmeta`, whose shape
+        differs between Cloud, DC 9 and older Server; `/project/{key}` is
+        the one answer every deployment gives the same way.
+        """
+        data = self._get(self._api(f"/project/{project_key}"))
+        return [IssueType.from_api(t) for t in data.get("issueTypes") or []]
+
     def get_issue(self, key: str) -> Ticket:
         return Ticket.from_api(self._get(self._api(f"/issue/{key}")))
 
@@ -291,6 +305,15 @@ class JiraClient:
             json={"body": body},
         )
         return Comment.from_api(r.json())
+
+    def create_issue(self, fields: dict) -> str:
+        """POST a new issue and return its key.
+
+        Not idempotent — unlike every other write here, sending it twice
+        makes two tickets, so nothing above this may retry it blindly.
+        """
+        r = self._send("POST", self._api("/issue"), json={"fields": fields})
+        return r.json().get("key", "")
 
     def edit_issue(self, key: str, fields: dict) -> None:
         """PUT a partial field update. Returns 204; no body parsed."""

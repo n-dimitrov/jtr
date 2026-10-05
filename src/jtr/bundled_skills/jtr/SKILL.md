@@ -1,6 +1,6 @@
 ---
 name: jtr
-description: "Track & Release (Jira) operations via the local `jtr` CLI — list/search/view tickets, comment, edit fields, label, assign, transition. Use whenever the user mentions Jira, Track & Release, a ticket key like PROJ-NNNNN, asks about their work queue, or invokes /jtr. Reads run freely; writes need explicit per-turn user authorization."
+description: "Track & Release (Jira) operations via the local `jtr` CLI — list/search/view tickets, create tickets and sub-tasks, comment, edit fields, label, assign, transition. Use whenever the user mentions Jira, Track & Release, a ticket key like PROJ-NNNNN, asks about their work queue, or invokes /jtr. Reads run freely; writes need explicit per-turn user authorization."
 trigger: /jtr
 ---
 
@@ -36,8 +36,8 @@ the comments, transitions, edits). Apply the same care as `git push`:
 
 | Action | Permission |
 |---|---|
-| `jtr list / search / view / whoami / projects / auth status / config show` | Run freely — read-only. |
-| `jtr comment / edit / label add\|remove / assign / transition` | **Require explicit per-action user authorization.** Don't use `--yes` unless the user approved that exact change this turn. Default CLI behavior prompts y/N, which will hang in a non-TTY shell — so the flow is: show the command, get approval, then run with `--yes`. |
+| `jtr list / search / view / whoami / projects / issuetypes / auth status / config show` | Run freely — read-only. |
+| `jtr create / comment / edit / label add\|remove / assign / transition` | **Require explicit per-action user authorization.** Don't use `--yes` unless the user approved that exact change this turn. Default CLI behavior prompts y/N, which will hang in a non-TTY shell — so the flow is: show the command, get approval, then run with `--yes`. |
 | `jtr init`, `jtr auth pat\|sso\|token\|logout`, `jtr config base-url\|project\|deployment` | Touches credentials/config — confirm before running. |
 | `jtr reset` | **Destructive** — deletes all jtr-managed data and (in project-local mode) removes `./.jtr/`. Always confirm; never pass `--yes` unsolicited. |
 
@@ -55,6 +55,7 @@ jtr list mine [--all-statuses] [--all] [--json]  # assigned to me; --all = cross
 jtr list mine --project KEY --limit N [--start-at N|--cursor TOK] [--json]
 jtr search "<JQL>" [--all] [--project KEY] [--limit N] [--start-at N|--cursor TOK] [--json]
 jtr projects [--json]                            # projects the user can see
+jtr issuetypes [<PROJECT>] [--json]              # issue types (what create --type accepts)
 jtr auth status [--json]                         # cookie count + captured_at
 jtr config show [--json]                         # env paths + values
 ```
@@ -91,6 +92,9 @@ than picking one.
 
 ### Writing (need user OK each time)
 ```bash
+jtr create "<summary>" [--project KEY] [--type NAME] [-d "<desc>"] [--labels a,b]
+           [--priority NAME] [--assignee <user>] [-f name=value]... --yes
+jtr create "<summary>" --parent <KEY> --yes      # sub-task under <KEY>
 jtr comment <KEY> "<text>" --yes
 jtr edit <KEY> <field> <value> --yes             # full replace
 jtr label add|remove <KEY> <name> --yes          # idempotent single-label
@@ -134,6 +138,13 @@ require knowing the rest of the list.
 - **Labels are case-sensitive.** `availableresources` ≠ `AvailableResources`. When in doubt, `jtr view` a known ticket and copy the exact spelling.
 - If `JTR_PROJECT` is set, list/search auto-AND with `project = <KEY>` unless the JQL already mentions `project`, `--all` is passed, or `--project OTHER` overrides. The actual JQL sent prints above each result table — read it to debug "matched nothing".
 - Single quotes around string values are safest; double quotes inside the outer shell-quoted JQL clash.
+
+## Creating tickets
+
+- `jtr create "<summary>"` makes a Task in `JTR_PROJECT` (or `--project`); `--parent <KEY>` makes a sub-task in the parent's project instead.
+- **Not idempotent** — a second run creates a second ticket. Never re-run a create to "make sure"; check the JSON result (`created`, `url`) or search first.
+- Unsure of the type name? `jtr issuetypes <PROJECT>` first. A project with several sub-task types needs an explicit `--type`.
+- A `jira_error` naming fields means the project requires them: ask the user for the values and pass each as `-f name=value` (JSON values are sent as JSON). Don't invent values for required fields.
 
 ## Transitions
 
@@ -225,9 +236,11 @@ Success shapes:
 | `view` | `{"ticket": {...}, "comments": [...]}` |
 | `whoami` | `{"name", "display_name", "key", "account_id", "email"}` (`name` is empty on Cloud, `account_id` empty on Server/DC) |
 | `projects` | `{"count", "projects": [{"key", "name", "id", "lead"}]}` |
+| `issuetypes` | `{"project", "count", "issue_types": [{"id", "name", "subtask", "description"}]}` |
 | `auth status` | `{env_file, base_url, deployment, api_version, auth_method, email, pat, cookies, cookies_file, cookies_captured_at}` |
 | `init` / `auth` / `config show / base-url / project / deployment` | `{"mode", "config_dir", "env_file", "session_file", "audit_log", "base_url", "deployment", "api_version", "project", "pat_set", "email", "auth_method"}` (setters return the *new* state; `init`/`auth` add `gitignore_updated`, `skills_installed`, `authenticated`) |
 | writes (`comment`/`edit`/`label`/`assign`/`transition`) | the audit row: `{ts, action, key, ok, before, after, result, changed}` |
+| `create` | the audit row (`key` is the parent or project it was filed under), plus `changed`, `created` (the new ticket key) and `url` |
 | `transition <KEY>` (no status) | `{"key", "transitions": [{"id", "name", "to_status"}]}` |
 
 Error shape (any `--json` command on failure):
@@ -238,7 +251,7 @@ Stable codes: `not_authenticated` and `unsupported_deployment` (exit 2);
 `not_found`, `jira_error`, `not_configured`, `already_initialized`,
 `input_required`, `confirmation_required`, `invalid_input`,
 `no_auth_method`, `sso_failed`, `verification_failed`,
-`no_transition_match`, `ambiguous_transition`, `unsupported_option`
+`no_transition_match`, `ambiguous_transition`, `unknown_issue_type`, `unsupported_option`
 (a paging flag used on the wrong deployment), `ambiguous_user` and
 `user_not_found` (Cloud assignee lookup) — all exit 1. The PAT/token
 *value* is never returned by any endpoint — only `pat_set: true|false`.
