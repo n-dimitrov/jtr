@@ -8,10 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv, set_key
 from platformdirs import user_config_dir
 
-try:
-    from importlib.resources import files
-except ImportError:
-    from importlib_resources import files  # type: ignore[import-not-found,no-redef]
+from . import skills
 
 KEY_BASE_URL = "JTR_BASE_URL"
 # The secret, whatever its flavour: a Bearer PAT on Server/DC, an API token
@@ -64,66 +61,6 @@ def _migrate_legacy_global(new: Path) -> None:
         shutil.rmtree(old, ignore_errors=True)
 
 
-def _install_bundled_skills(cwd: Path) -> list[str]:
-    """Copy bundled skills from the package to ./.claude/skills/.
-
-    Returns list of skill names that were installed (not skipped).
-    """
-    skills_target = cwd / ".claude" / "skills"
-    installed = []
-
-    # Get bundled_skills path from package
-    try:
-        bundled = files("jtr").joinpath("bundled_skills")
-    except (TypeError, AttributeError, ModuleNotFoundError):
-        # Fallback for development or edge cases
-        return installed
-
-    # Copy each skill directory
-    for skill_name in ["jtr"]:
-        try:
-            skill_src = bundled.joinpath(skill_name)
-            skill_dst = skills_target / skill_name
-
-            # Skip if already exists
-            if skill_dst.exists():
-                continue
-
-            # Only now create the tree — a skipped install must not leave an
-            # empty .claude/skills/ behind in someone else's directory.
-            skills_target.mkdir(parents=True, exist_ok=True)
-
-            # Extract to temporary location first (works with both filesystem and zip)
-            if hasattr(skill_src, "is_dir") and skill_src.is_dir():
-                shutil.copytree(skill_src, skill_dst)
-                installed.append(skill_name)
-            else:
-                # Handle zip/package case by reading files
-                skill_dst.mkdir(parents=True, exist_ok=True)
-                _copy_skill_from_package(skill_src, skill_dst)
-                installed.append(skill_name)
-        except Exception:
-            # Silently skip on errors - skills are optional
-            continue
-
-    return installed
-
-
-def _copy_skill_from_package(src, dst: Path) -> None:
-    """Recursively copy skill files from package resources."""
-    try:
-        if hasattr(src, "iterdir"):
-            for item in src.iterdir():
-                if item.is_file():
-                    (dst / item.name).write_bytes(item.read_bytes())
-                elif item.is_dir():
-                    subdir = dst / item.name
-                    subdir.mkdir(exist_ok=True)
-                    _copy_skill_from_package(item, subdir)
-    except Exception:
-        pass
-
-
 def config_dir() -> Path:
     """Active config dir: $JTR_CONFIG_DIR, else `./.jtr/`, else the user dir.
 
@@ -171,7 +108,8 @@ def init_project(
     $JTR_CONFIG_DIR); `cwd` still decides where .gitignore and the
     bundled skills go.
 
-    Returns (project_dir, gitignore_touched, installed_skills). Raises
+    Returns (project_dir, gitignore_touched, installed_skills) — the last
+    lists skills that were installed or refreshed, not ones left as-is. Raises
     InitError if the folder already exists and `force` is not set; with
     `force`, the existing config is updated in place instead.
 
@@ -201,8 +139,15 @@ def init_project(
         if value:
             set_value(key, value)
 
-    # Copy bundled skills to ./.claude/skills/
-    installed_skills = _install_bundled_skills(cwd) if install_skills else []
+    # Copy the bundled skill to ./.claude/skills/, or refresh a stale copy.
+    # Optional extra: a read-only tree must not fail the whole init.
+    installed_skills = []
+    if install_skills:
+        try:
+            if skills.install("project", cwd) in (skills.INSTALLED, skills.UPDATED):
+                installed_skills.append(skills.SKILL_NAME)
+        except OSError:
+            pass
 
     touched = False
     if update_gitignore:

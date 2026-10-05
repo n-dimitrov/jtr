@@ -25,5 +25,7 @@ def isolated_config(tmp_path, monkeypatch):
     for key in _KEYS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv(config.KEY_CONFIG_DIR, str(tmp_path))
+    # Keep `jtr skill ... --global` out of the developer's real ~/.claude.
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-home"))
     config.ensure_env_file()
     return tmp_path

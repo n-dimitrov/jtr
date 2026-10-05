@@ -36,9 +36,10 @@ the comments, transitions, edits). Apply the same care as `git push`:
 
 | Action | Permission |
 |---|---|
-| `jtr list / search / view / whoami / projects / issuetypes / auth status / config show` | Run freely — read-only. |
+| `jtr list / search / view / whoami / projects / issuetypes / auth status / config show / skill status / update --check` | Run freely — read-only. |
 | `jtr create / comment / edit / label add\|remove / assign / transition` | **Require explicit per-action user authorization.** Don't use `--yes` unless the user approved that exact change this turn. Default CLI behavior prompts y/N, which will hang in a non-TTY shell — so the flow is: show the command, get approval, then run with `--yes`. |
 | `jtr init`, `jtr auth pat\|sso\|token\|logout`, `jtr config base-url\|project\|deployment` | Touches credentials/config — confirm before running. |
+| `jtr update`, `jtr skill install\|update` | Replaces the installed jtr / writes skill files under `.claude/skills/` — confirm before running. |
 | `jtr reset` | **Destructive** — deletes all jtr-managed data and (in project-local mode) removes `./.jtr/`. Always confirm; never pass `--yes` unsolicited. |
 
 After any write, surface the audit-log line (or at least the
@@ -74,6 +75,20 @@ jtr auth token [--email <addr>] [--token <v>]    # Cloud: email + API token
 jtr config deployment server|cloud|auto          # override hostname detection
 jtr reset [--yes] [--json]                       # delete all jtr-managed data (destructive)
 ```
+
+### Updating jtr and this skill
+```bash
+jtr update --check [--json]                      # is a newer release out? (read-only)
+jtr update [--json]                              # install it, then refresh the skill
+jtr skill status [--json]                        # where the skill is installed; current/outdated/modified
+jtr skill install [--global] [--force] [--json]  # ./.claude/skills/ or ~/.claude/skills/
+jtr skill update [--json]                        # refresh existing copies only
+```
+
+On Windows `jtr update` can't replace a running jtr and exits 1 with
+`manual_update_required`; its `fix` is the installer one-liner for the
+user to run. A skill copy the user has edited reports `modified` and is
+only replaced with `--force` — don't pass that unasked.
 
 ### Deployment differences
 

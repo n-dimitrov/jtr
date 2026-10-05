@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import NoReturn
@@ -13,8 +14,9 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from . import __version__, audit, auth, config, safety, views
+from . import __version__, audit, auth, config, safety, skills, views
 from . import dialect as dialect_mod
+from . import update as update_mod
 from .client import AmbiguousUser, JiraClient, JiraError, UserNotFound
 
 app = typer.Typer(
@@ -33,10 +35,14 @@ auth_app = typer.Typer(
 config_app = typer.Typer(no_args_is_help=True, help="Read/write jtr config.")
 list_app = typer.Typer(no_args_is_help=True, help="Canned ticket lists.")
 label_app = typer.Typer(no_args_is_help=True, help="Add/remove single labels (idempotent).")
+skill_app = typer.Typer(
+    no_args_is_help=True, help="Install/refresh the bundled /jtr Claude Code skill."
+)
 app.add_typer(auth_app, name="auth")
 app.add_typer(config_app, name="config")
 app.add_typer(list_app, name="list")
 app.add_typer(label_app, name="label")
+app.add_typer(skill_app, name="skill")
 
 
 def _make_console(*, stderr: bool = False) -> Console:
@@ -884,6 +890,11 @@ def cmd_init(
             skills_str = ", ".join(f"/{s}" for s in installed_skills)
             noun = "skill" if len(installed_skills) == 1 else "skills"
             console.print(f"[green]Installed[/] Claude Code {noun}: {skills_str}")
+        elif not no_skills and skills.status("project", root).state == skills.MODIFIED:
+            console.print(
+                "[yellow]Kept[/] ./.claude/skills/jtr — it has local edits. "
+                "[dim](jtr skill install --force replaces it)[/]"
+            )
 
     if no_auth or not method:
         if json_out:
@@ -961,6 +972,215 @@ def cmd_reset(
         console.print(f"[green]Removed[/] {target}/ — back to global config.")
     else:
         console.print(f"[green]Cleared[/] {target}/")
+
+
+# -- skill / update ---------------------------------------------------
+
+_SKILL_VERBS = {
+    skills.INSTALLED: "[green]Installed[/]",
+    skills.UPDATED: "[green]Updated[/]",
+    skills.UNCHANGED: "[dim]Up to date:[/]",
+    skills.MODIFIED: "[yellow]Kept (local edits):[/]",
+}
+_SKILL_FORCE_FIX = "jtr skill install{flag} --force   (replaces your edits)"
+
+
+def _print_skill_rows(rows: list[dict]) -> None:
+    for row in rows:
+        console.print(
+            f"{_SKILL_VERBS[row['action']]} /jtr skill "
+            f"[dim]({row['scope']})[/] {row['path']}"
+        )
+        if row["action"] == skills.MODIFIED:
+            flag = " --global" if row["scope"] == "global" else ""
+            console.print(f"  [dim]Fix:[/] {_SKILL_FORCE_FIX.format(flag=flag)}")
+
+
+@skill_app.command("install")
+def skill_install(
+    global_: bool = typer.Option(
+        False,
+        "--global",
+        "-g",
+        help="Install to ~/.claude/skills/ (every project) instead of ./.claude/skills/.",
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Replace a copy that has local edits."
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON to stdout."),
+):
+    """Install the /jtr Claude Code skill, or bring an old copy up to date.
+
+    A copy you have edited is left alone unless `--force` is given.
+    """
+    scope = "global" if global_ else "project"
+    try:
+        action = skills.install(scope, force=force)
+    except OSError as e:
+        _fail("skill_install_failed", f"Couldn't write the skill: {e}", json_out=json_out)
+    st = skills.status(scope)
+    if action == skills.MODIFIED:
+        _fail(
+            "skill_modified",
+            f"{st.path} has local edits; not overwriting it.",
+            json_out=json_out,
+            fix=_SKILL_FORCE_FIX.format(flag=" --global" if global_ else ""),
+        )
+    row = {**st.__dict__, "action": action}
+    if json_out:
+        views.print_json(row)
+        return
+    _print_skill_rows([row])
+
+
+@skill_app.command("update")
+def skill_update(
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON to stdout."),
+):
+    """Refresh every installed copy of the skill (this project's and the global one).
+
+    Never installs the skill somewhere it isn't already, and never
+    overwrites a copy with local edits.
+    """
+    try:
+        rows = skills.refresh_existing()
+    except OSError as e:
+        _fail("skill_install_failed", f"Couldn't write the skill: {e}", json_out=json_out)
+    if json_out:
+        views.print_json({"skills": rows})
+        return
+    if not rows:
+        console.print(
+            "[dim]No /jtr skill installed here or globally.[/] "
+            "Install one with: jtr skill install [--global]"
+        )
+        return
+    _print_skill_rows(rows)
+
+
+@skill_app.command("status")
+def skill_status(
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON to stdout."),
+):
+    """Show where the /jtr skill is installed and whether each copy is current."""
+    rows = [skills.status(scope).__dict__ for scope in ("project", "global")]
+    if json_out:
+        views.print_json({"bundled_version": __version__, "skills": rows})
+        return
+    colors = {
+        skills.CURRENT: "green",
+        skills.OUTDATED: "yellow",
+        skills.MODIFIED: "yellow",
+        skills.MISSING: "dim",
+    }
+    table = Table(show_header=True, header_style="bold")
+    for col in ("scope", "state", "version"):
+        table.add_column(col)
+    table.add_column("path", overflow="fold")
+    for row in rows:
+        state = row["state"]
+        table.add_row(
+            row["scope"],
+            f"[{colors[state]}]{state}[/]",
+            row["version"] or ("-" if state == skills.MISSING else "unknown"),
+            row["path"],
+        )
+    console.print(table)
+    if any(r["state"] == skills.OUTDATED for r in rows):
+        console.print("[dim]Refresh outdated copies with:[/] jtr skill update")
+
+
+def _refresh_skills_with_new_jtr(*, json_out: bool) -> list[dict] | None:
+    """Run `skill update` in the freshly installed jtr.
+
+    This process still has the old package loaded, so the new skill has to
+    be written by the new one. Returns its rows under --json, else None.
+    """
+    exe = sys.argv[0] if Path(sys.argv[0]).exists() else "jtr"
+    cmd = [exe, "skill", "update"]
+    try:
+        if not json_out:
+            subprocess.run(cmd, check=False)
+            return None
+        out = subprocess.run(cmd + ["--json"], capture_output=True, text=True).stdout
+        return json.loads(out).get("skills", [])
+    except (OSError, ValueError):
+        return [] if json_out else None
+
+
+@app.command("update")
+def cmd_update(
+    check: bool = typer.Option(
+        False, "--check", help="Only report whether a newer release exists."
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON to stdout."),
+):
+    """Update jtr to the latest release and refresh the /jtr skill.
+
+    Installs the new version with uv, then brings this project's and the
+    global copy of the Claude Code skill up to date (edited copies are left
+    alone). Already on the latest release? The skill is still refreshed.
+    """
+    try:
+        latest = update_mod.latest_version()
+    except update_mod.UpdateError as e:
+        _fail("update_check_failed", str(e), json_out=json_out)
+    available = update_mod.is_newer(latest, __version__)
+    state = {"installed": __version__, "latest": latest, "update_available": available}
+
+    if check:
+        if json_out:
+            views.print_json(state)
+        elif available:
+            console.print(
+                f"jtr [bold]{latest}[/] is available (installed: {__version__}). "
+                "Run: jtr update"
+            )
+        else:
+            console.print(f"jtr {__version__} is the latest release.")
+        return
+
+    if not available:
+        try:
+            rows = skills.refresh_existing()
+        except OSError as e:
+            _fail("skill_install_failed", f"Couldn't write the skill: {e}", json_out=json_out)
+        if json_out:
+            views.print_json({**state, "updated": False, "skills": rows})
+            return
+        console.print(f"jtr {__version__} is the latest release.")
+        _print_skill_rows(rows)
+        return
+
+    manual = update_mod.install_command()
+    if sys.platform == "win32":
+        # A running jtr.exe (and its python.exe) can't be replaced on Windows.
+        _fail(
+            "manual_update_required",
+            f"jtr {latest} is available (installed: {__version__}), but on "
+            "Windows jtr can't replace itself while it's running.",
+            json_out=json_out,
+            fix=manual,
+        )
+    if not update_mod.is_uv_tool_install():
+        _fail(
+            "manual_update_required",
+            f"jtr {latest} is available (installed: {__version__}), but this "
+            "copy wasn't installed with `uv tool`, so it can't update itself.",
+            json_out=json_out,
+            fix=manual,
+        )
+    if not json_out:
+        console.print(f"Updating jtr {__version__} → {latest} ...")
+    try:
+        update_mod.install(latest)
+    except update_mod.UpdateError as e:
+        _fail("update_failed", str(e), json_out=json_out, fix=manual)
+    rows = _refresh_skills_with_new_jtr(json_out=json_out)
+    if json_out:
+        views.print_json({**state, "updated": True, "skills": rows})
+        return
+    typer.echo(f"Updated jtr to {latest}.")
 
 
 @app.command("whoami")

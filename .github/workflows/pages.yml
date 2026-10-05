@@ -1,0 +1,43 @@
+name: pages
+
+# Publishes the landing page (site/) and the installers to GitHub Pages.
+# Runs after every release so the page and the scripts it hands out match
+# what was just published; can also be run by hand.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble site
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n1)
+          test -n "$version"
+          mkdir _site
+          cp -R site/. _site/
+          # The one-liners on the page fetch the installers from here.
+          cp install.sh install.ps1 _site/
+          sed -i "s/__VERSION__/$version/g" _site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
