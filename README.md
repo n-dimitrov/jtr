@@ -217,7 +217,7 @@ jtr create "<summary>" [--project KEY | --parent KEY] [--type NAME]
 jtr comment <KEY> "<text>"                 add a comment
 jtr edit <KEY> <field> <value>             edit one field (full replace)
 jtr label add | remove <KEY> <name>        single-label add/remove (idempotent)
-jtr assign <KEY> <user> | --unassign       set/clear the assignee
+jtr assign <KEY> <user> | me | --unassign  set/clear the assignee
 jtr transition <KEY> [<status>] [-m "..."] move through workflow
 jtr auth [--method sso|pat] [--json]       authenticate with the saved method
 jtr auth pat | sso [--json]                set / refresh credentials

@@ -1384,8 +1384,8 @@ def cmd_assign(
     user: str = typer.Argument(
         "",
         help=(
-            "Server/DC: username. Cloud: email, display name, or accountId. "
-            "Empty or use --unassign to clear."
+            "`me`, or — Server/DC: username. Cloud: email, display name, or "
+            "accountId. Empty or use --unassign to clear."
         ),
     ),
     unassign: bool = typer.Option(False, "--unassign", help="Clear the assignee."),
@@ -1614,7 +1614,7 @@ def cmd_create(
     assignee: str | None = typer.Option(
         None,
         "--assignee",
-        help="Server/DC: username. Cloud: email, display name, or accountId.",
+        help="`me`, or — Server/DC: username. Cloud: email, display name, or accountId.",
     ),
     field: list[str] | None = typer.Option(  # noqa: B008 - list type hides it
         None,

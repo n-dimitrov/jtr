@@ -136,7 +136,7 @@ jtr issuetypes PROJ                               # what --type accepts
 jtr create "Login page 500s on empty password"    # a Task in JTR_PROJECT
 jtr create "Crash on save" --project PROJ --type Bug \
     -d "Steps to reproduce: ..." --labels "release,blocker" \
-    --priority High --assignee jdoe
+    --priority High --assignee me
 jtr create "Write the migration" --parent PROJ-123        # a sub-task
 jtr create "Add tests" --parent PROJ-123 --yes --json     # scripted
 ```
@@ -158,6 +158,7 @@ jtr create "Crash on save" \
 
 ```bash
 jtr assign PROJ-123 jdoe              # set
+jtr assign PROJ-123 me                # yourself
 jtr assign PROJ-123 --unassign        # clear
 jtr assign PROJ-123 jdoe --yes        # scripted, no prompt
 ```

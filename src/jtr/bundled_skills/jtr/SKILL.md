@@ -93,12 +93,12 @@ than picking one.
 ### Writing (need user OK each time)
 ```bash
 jtr create "<summary>" [--project KEY] [--type NAME] [-d "<desc>"] [--labels a,b]
-           [--priority NAME] [--assignee <user>] [-f name=value]... --yes
+           [--priority NAME] [--assignee <user>|me] [-f name=value]... --yes
 jtr create "<summary>" --parent <KEY> --yes      # sub-task under <KEY>
 jtr comment <KEY> "<text>" --yes
 jtr edit <KEY> <field> <value> --yes             # full replace
 jtr label add|remove <KEY> <name> --yes          # idempotent single-label
-jtr assign <KEY> <user> --yes   |  jtr assign <KEY> --unassign --yes
+jtr assign <KEY> <user>|me --yes   |  jtr assign <KEY> --unassign --yes
 jtr transition <KEY>                             # NO --yes — lists what's available
 jtr transition <KEY> "<status>" [-m "msg"] --yes
 ```

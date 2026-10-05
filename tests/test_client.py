@@ -169,6 +169,17 @@ def test_resolve_assignee_is_noop_on_server():
     assert make_client(handler).resolve_assignee("jdoe") == "jdoe"
 
 
+@pytest.mark.parametrize(
+    ("url", "expected"), [(SERVER_URL, "jdoe"), (CLOUD_URL, "557058:abc")]
+)
+def test_resolve_assignee_me_is_the_authenticated_user(url, expected):
+    def handler(request):
+        assert request.url.path.endswith("/myself")
+        return json_response({"name": "jdoe", "accountId": "557058:abc"})
+
+    assert make_client(handler, url=url).resolve_assignee(" Me ") == expected
+
+
 def test_resolve_assignee_looks_up_email_on_cloud():
     seen = {}
 

@@ -271,8 +271,13 @@ class JiraClient:
         confirm anyway. On Cloud nobody knows their own accountId, so an
         email or display name gets looked up, with exact-email and
         exact-display-name matches winning over a partial one.
+
+        `me` is the authenticated user on either deployment.
         """
         query = query.strip()
+        if query.lower() == "me":
+            me = self.myself()
+            return me.get("accountId" if self.dialect.is_cloud else "name") or ""
         if not self.dialect.is_cloud or not query:
             return query
         # Already an accountId (Atlassian's are opaque but never contain @).
