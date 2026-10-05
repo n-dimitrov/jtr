@@ -83,6 +83,23 @@ class Project:
 
 
 @dataclass
+class IssueType:
+    id: str
+    name: str
+    subtask: bool = False
+    description: str = ""
+
+    @classmethod
+    def from_api(cls, data: dict) -> IssueType:
+        return cls(
+            id=str(data.get("id", "") or ""),
+            name=data.get("name", "") or "",
+            subtask=bool(data.get("subtask")),
+            description=data.get("description", "") or "",
+        )
+
+
+@dataclass
 class Ticket:
     key: str
     summary: str

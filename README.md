@@ -205,14 +205,19 @@ jtr init [<ticket-url>] [--ticket <url>] [--base-url <url>] [--project KEY]
 jtr reset [--yes] [--json]                 delete all jtr-managed data (active dir)
 jtr whoami [--json]                        print authenticated user
 jtr projects [--json]                      projects you can see (for a picker)
+jtr issuetypes [<PROJECT>] [--json]        issue types a project uses
 jtr list mine [--all] [--all-statuses]     tickets assigned to me
                   [--project KEY] [--limit N] [--start-at N] [--json]
 jtr search "<JQL>" [--all] [--project KEY] [--limit N] [--start-at N] [--json]
 jtr view <KEY> [--json]                    header + fields + comments
+jtr create "<summary>" [--project KEY | --parent KEY] [--type NAME]
+           [-d "<description>"] [--labels a,b] [--priority NAME]
+           [--assignee <user>] [-f name=value]...
+                                           create a ticket, or a sub-task
 jtr comment <KEY> "<text>"                 add a comment
 jtr edit <KEY> <field> <value>             edit one field (full replace)
 jtr label add | remove <KEY> <name>        single-label add/remove (idempotent)
-jtr assign <KEY> <user> | --unassign       set/clear the assignee
+jtr assign <KEY> <user> | me | --unassign  set/clear the assignee
 jtr transition <KEY> [<status>] [-m "..."] move through workflow
 jtr auth [--method sso|pat] [--json]       authenticate with the saved method
 jtr auth pat | sso [--json]                set / refresh credentials
@@ -255,6 +260,25 @@ call if the label is already in the desired state).
 For transitions, `jtr transition <KEY>` (no status arg) lists the
 available transitions on that ticket. Match is on the transition name
 or its target status, case-insensitive, partial OK if unambiguous.
+
+### Creating tickets and sub-tasks
+
+`jtr create "<summary>"` creates a Task in `JTR_PROJECT` (or
+`--project`). With `--parent <KEY>` it creates a sub-task under that
+ticket instead, in the parent's project, using the project's sub-task
+type. `--type` picks another type by name — `jtr issuetypes` lists what
+the project has; when a project has several sub-task types, `--type` is
+required rather than guessed.
+
+Projects often require fields jtr has no flag for. Jira's error names
+them; set each with `-f name=value` (repeatable). A value that parses
+as JSON is sent as JSON — `-f 'customfield_10010={"value": "Blue"}'` —
+and anything else as plain text.
+
+Unlike the other writes, `create` is **not idempotent**: running it
+twice creates two tickets. Its audit row is filed under the parent (or
+project) key, with the new ticket's key in `result`; under `--json` the
+row also carries `created` (the new key) and `url`.
 
 ### Project scoping
 
@@ -300,9 +324,11 @@ Shapes:
 - view          → `{"ticket": {...}, "comments": [...]}`
 - whoami        → `{"name", "display_name", "key", "email"}`
 - projects      → `{"count", "projects": [{"key", "name", "id", "lead"}]}`
+- issuetypes    → `{"project", "count", "issue_types": [{"id", "name", "subtask", "description"}]}`
 - auth status   → same dict as the table view (env paths, pat/cookies state)
 - init / auth / config show / base-url / project → the config state below
 - writes        → the audit row that was appended, plus `changed`
+- create        → the audit row, plus `changed`, `created` (new key) and `url`
 - `transition <KEY>` with no status → `{"key", "transitions": [{"id", "name", "to_status"}]}`
 - reset         → `{"config_dir", "removed": [...], "folder_removed"}`
 
@@ -397,7 +423,8 @@ Stable `error` codes:
 | `already_initialized` | 1 | `init` found an existing config and no `--force` |
 | `input_required` | 1 | `--json` needs a value it would otherwise prompt for |
 | `confirmation_required` | 1 | A write or `reset` under `--json` with no `--yes` and no terminal |
-| `invalid_input` | 1 | Empty comment/label, unknown edit field |
+| `invalid_input` | 1 | Empty comment/label/summary, unknown edit field, malformed `--field`, no project for `create` |
+| `unknown_issue_type` | 1 | `create` found no such type in the project, or couldn't pick a default |
 | `no_auth_method` | 1 | `jtr auth` with nothing saved and no `--method` |
 | `sso_failed` / `verification_failed` | 1 | Login didn't complete |
 | `no_transition_match` / `ambiguous_transition` | 1 | The status argument matched zero / several transitions |
@@ -500,7 +527,7 @@ src/jtr/
   config.py     .env load/save + paths
   auth.py       PAT + SSO cookie storage; browser login flow
   browser.py    Minimal CDP driver for the installed Edge/Chrome
-  client.py     JiraClient: read + write (comment / edit / assign / transition)
+  client.py     JiraClient: read + write (create / comment / edit / assign / transition)
   models.py     Ticket, Comment, User, Transition dataclasses
   views.py      Rich renderers + JSON printers for tables / detail view
   safety.py     preview / confirm / audit wrapper used by every write

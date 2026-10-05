@@ -129,10 +129,36 @@ jtr edit PROJ-123 fixVersions "2026.06,2026.07"
 To **add** one label without losing the others, run `jtr view`
 first and re-send the full list with the new entry appended.
 
+## Creating tickets and sub-tasks
+
+```bash
+jtr issuetypes PROJ                               # what --type accepts
+jtr create "Login page 500s on empty password"    # a Task in JTR_PROJECT
+jtr create "Crash on save" --project PROJ --type Bug \
+    -d "Steps to reproduce: ..." --labels "release,blocker" \
+    --priority High --assignee me
+jtr create "Write the migration" --parent PROJ-123        # a sub-task
+jtr create "Add tests" --parent PROJ-123 --yes --json     # scripted
+```
+
+A sub-task goes in its parent's project and uses the project's sub-task
+type; pass `--type` when the project has more than one.
+
+If the project requires fields `jtr` has no flag for, Jira's error names
+them — set each with `-f` (repeatable; JSON values are sent as JSON):
+
+```bash
+jtr create "Crash on save" \
+    -f 'customfield_10010={"value": "Blue"}' -f customfield_10020=5
+```
+
+`create` is not idempotent — run it twice and you have two tickets.
+
 ## Assigning
 
 ```bash
 jtr assign PROJ-123 jdoe              # set
+jtr assign PROJ-123 me                # yourself
 jtr assign PROJ-123 --unassign        # clear
 jtr assign PROJ-123 jdoe --yes        # scripted, no prompt
 ```
