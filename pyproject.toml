@@ -1,6 +1,6 @@
 [project]
 name = "jtr"
-version = "1.1.0"
+version = "1.2.0"
 description = "Local CLI for Jira / Track & Release (Server/Data Center and Cloud) tickets — read, comment, edit, transition with preview/confirm safety."
 readme = "README.md"
 requires-python = ">=3.11"
