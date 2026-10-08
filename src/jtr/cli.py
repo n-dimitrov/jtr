@@ -669,6 +669,45 @@ def _parse_jira_url(url: str) -> tuple[str, str]:
     )
 
 
+def _stdin_is_tty() -> bool:
+    # Own function so tests can stand in a terminal (CliRunner swaps stdin).
+    return sys.stdin.isatty()
+
+
+# -- skill agents -----------------------------------------------------
+
+_AGENT_CHOICES = "|".join(skills.agent_names())
+
+
+def _resolve_agent(name: str | None, *, json_out: bool) -> str:
+    try:
+        return skills.resolve_agent(name)
+    except ValueError as e:
+        _fail("invalid_input", str(e), json_out=json_out, exit_code=2)
+
+
+def _agent_flag(agent: str, scope: str = "project") -> str:
+    """The flags that reproduce (agent, scope) on `jtr skill install`."""
+    flag = "" if agent == skills.DEFAULT_AGENT else f" --agent {agent}"
+    return flag + (" --global" if scope == "global" else "")
+
+
+def _choose_agent() -> str:
+    """Numbered menu of agents; Enter takes the default."""
+    names = skills.agent_names()
+    console.print("Which agent should get the /jtr skill?")
+    for i, key in enumerate(names, 1):
+        a = skills.AGENTS[key]
+        console.print(f"  {i}. {a.label:<16}[dim]./{a.local}[/]")
+    default = names.index(skills.DEFAULT_AGENT) + 1
+    while True:
+        pick = typer.prompt("Choice", default=default, type=int)
+        if 1 <= pick <= len(names):
+            return names[pick - 1]
+        err.print(f"[red]Enter a number from 1 to {len(names)}.[/]")
+
+
+
 @app.command("init")
 def cmd_init(
     ticket_url: str | None = typer.Argument(
@@ -719,7 +758,13 @@ def cmd_init(
         False, "--no-gitignore", help="Don't append `.jtr/` to ./.gitignore."
     ),
     no_skills: bool = typer.Option(
-        False, "--no-skills", help="Don't install the bundled Claude Code skill."
+        False, "--no-skills", help="Don't install the bundled /jtr skill."
+    ),
+    agent: str | None = typer.Option(
+        None,
+        "--agent",
+        help=f"Agent to install the skill for: {_AGENT_CHOICES}. Default: claude; "
+        "prompted for interactively.",
     ),
     bare: bool = typer.Option(
         False, "--bare", help="Config only: implies --no-gitignore --no-skills."
@@ -747,6 +792,7 @@ def cmd_init(
     """
     no_gitignore = no_gitignore or bare
     no_skills = no_skills or bare
+    skill_agent = _resolve_agent(agent, json_out=json_out)
     source = ticket or ticket_url
     parsed_base, parsed_project = _parse_jira_url(source) if source else ("", "")
 
@@ -781,7 +827,7 @@ def cmd_init(
     email = (email or "").strip() or (existing.email if existing else "") or ""
 
     # --json is a promise that stdout is parseable; a prompt would break it.
-    interactive = sys.stdin.isatty() and not json_out
+    interactive = _stdin_is_tty() and not json_out
     if not base_url:
         if not interactive:
             _fail(
@@ -826,6 +872,8 @@ def cmd_init(
         project = typer.prompt(
             "Default project key (blank for none)", default="", show_default=False
         ).strip().upper()
+    if interactive and not no_skills and agent is None:
+        skill_agent = _choose_agent()
     if not method and not no_auth:
         saved = auth.resolve_method(existing)
         allowed = auth.methods_for(d)
@@ -855,6 +903,7 @@ def cmd_init(
             email=email,
             force=force,
             install_skills=not no_skills,
+            skill_agent=skill_agent,
             target=explicit_target,
         )
     except config.InitError as e:
@@ -871,6 +920,7 @@ def cmd_init(
     scaffold = {
         "gitignore_updated": touched,
         "skills_installed": installed_skills,
+        "skill_agent": None if no_skills else skill_agent,
     }
 
     if not json_out:
@@ -889,11 +939,18 @@ def cmd_init(
         if installed_skills:
             skills_str = ", ".join(f"/{s}" for s in installed_skills)
             noun = "skill" if len(installed_skills) == 1 else "skills"
-            console.print(f"[green]Installed[/] Claude Code {noun}: {skills_str}")
-        elif not no_skills and skills.status("project", root).state == skills.MODIFIED:
+            label = skills.AGENTS[skill_agent].label
             console.print(
-                "[yellow]Kept[/] ./.claude/skills/jtr — it has local edits. "
-                "[dim](jtr skill install --force replaces it)[/]"
+                f"[green]Installed[/] {label} {noun}: {skills_str} "
+                f"[dim]({skills.project_dir(root, skill_agent)})[/]"
+            )
+        elif (
+            not no_skills
+            and skills.status("project", root, skill_agent).state == skills.MODIFIED
+        ):
+            console.print(
+                f"[yellow]Kept[/] {skills.project_dir(root, skill_agent)} — it has "
+                f"local edits. [dim]({_SKILL_FORCE_FIX.format(flag=_agent_flag(skill_agent))})[/]"
             )
 
     if no_auth or not method:
@@ -987,12 +1044,13 @@ _SKILL_FORCE_FIX = "jtr skill install{flag} --force   (replaces your edits)"
 
 def _print_skill_rows(rows: list[dict]) -> None:
     for row in rows:
+        label = skills.AGENTS[row["agent"]].label
         console.print(
             f"{_SKILL_VERBS[row['action']]} /jtr skill "
-            f"[dim]({row['scope']})[/] {row['path']}"
+            f"[dim]({label}, {row['scope']})[/] {row['path']}"
         )
         if row["action"] == skills.MODIFIED:
-            flag = " --global" if row["scope"] == "global" else ""
+            flag = _agent_flag(row["agent"], row["scope"])
             console.print(f"  [dim]Fix:[/] {_SKILL_FORCE_FIX.format(flag=flag)}")
 
 
@@ -1002,29 +1060,42 @@ def skill_install(
         False,
         "--global",
         "-g",
-        help="Install to ~/.claude/skills/ (every project) instead of ./.claude/skills/.",
+        help="Install to the agent's home skills dir (every project) instead of "
+        "its project dir (~/.claude/skills/ vs ./.claude/skills/ for Claude Code).",
+    ),
+    agent: str | None = typer.Option(
+        None,
+        "--agent",
+        help=f"Agent to install for: {_AGENT_CHOICES}. Default: claude; "
+        "prompted for interactively.",
     ),
     force: bool = typer.Option(
         False, "--force", help="Replace a copy that has local edits."
     ),
     json_out: bool = typer.Option(False, "--json", help="Emit JSON to stdout."),
 ):
-    """Install the /jtr Claude Code skill, or bring an old copy up to date.
+    """Install the /jtr skill for an agent, or bring an old copy up to date.
 
+    In a terminal, with no `--agent`, a menu asks which agent (Claude Code,
+    Codex, Gemini CLI, Copilot, Cursor or OpenCode); otherwise Claude Code.
     A copy you have edited is left alone unless `--force` is given.
     """
     scope = "global" if global_ else "project"
+    if agent is None and _stdin_is_tty() and not json_out:
+        agent_key = _choose_agent()
+    else:
+        agent_key = _resolve_agent(agent, json_out=json_out)
     try:
-        action = skills.install(scope, force=force)
+        action = skills.install(scope, agent=agent_key, force=force)
     except OSError as e:
         _fail("skill_install_failed", f"Couldn't write the skill: {e}", json_out=json_out)
-    st = skills.status(scope)
+    st = skills.status(scope, agent=agent_key)
     if action == skills.MODIFIED:
         _fail(
             "skill_modified",
             f"{st.path} has local edits; not overwriting it.",
             json_out=json_out,
-            fix=_SKILL_FORCE_FIX.format(flag=" --global" if global_ else ""),
+            fix=_SKILL_FORCE_FIX.format(flag=_agent_flag(agent_key, scope)),
         )
     row = {**st.__dict__, "action": action}
     if json_out:
@@ -1037,8 +1108,9 @@ def skill_install(
 def skill_update(
     json_out: bool = typer.Option(False, "--json", help="Emit JSON to stdout."),
 ):
-    """Refresh every installed copy of the skill (this project's and the global one).
+    """Refresh every installed copy of the skill, for every agent.
 
+    Checks this project's and the global location of each supported agent.
     Never installs the skill somewhere it isn't already, and never
     overwrites a copy with local edits.
     """
@@ -1051,8 +1123,8 @@ def skill_update(
         return
     if not rows:
         console.print(
-            "[dim]No /jtr skill installed here or globally.[/] "
-            "Install one with: jtr skill install [--global]"
+            "[dim]No /jtr skill installed here or globally, for any agent.[/] "
+            "Install one with: jtr skill install [--global] [--agent NAME]"
         )
         return
     _print_skill_rows(rows)
@@ -1062,11 +1134,19 @@ def skill_update(
 def skill_status(
     json_out: bool = typer.Option(False, "--json", help="Emit JSON to stdout."),
 ):
-    """Show where the /jtr skill is installed and whether each copy is current."""
-    rows = [skills.status(scope).__dict__ for scope in ("project", "global")]
+    """Show where the /jtr skill is installed and whether each copy is current.
+
+    Claude Code's two locations are always listed; other agents only where
+    a copy exists (`--json` lists every agent).
+    """
+    all_rows = [st.__dict__ for st in skills.all_statuses()]
     if json_out:
-        views.print_json({"bundled_version": __version__, "skills": rows})
+        views.print_json({"bundled_version": __version__, "skills": all_rows})
         return
+    rows = [
+        r for r in all_rows
+        if r["agent"] == skills.DEFAULT_AGENT or r["state"] != skills.MISSING
+    ]
     colors = {
         skills.CURRENT: "green",
         skills.OUTDATED: "yellow",
@@ -1074,12 +1154,13 @@ def skill_status(
         skills.MISSING: "dim",
     }
     table = Table(show_header=True, header_style="bold")
-    for col in ("scope", "state", "version"):
+    for col in ("agent", "scope", "state", "version"):
         table.add_column(col)
     table.add_column("path", overflow="fold")
     for row in rows:
         state = row["state"]
         table.add_row(
+            row["agent"],
             row["scope"],
             f"[{colors[state]}]{state}[/]",
             row["version"] or ("-" if state == skills.MISSING else "unknown"),

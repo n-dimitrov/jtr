@@ -100,6 +100,7 @@ def init_project(
     email: str = "",
     force: bool = False,
     install_skills: bool = True,
+    skill_agent: str = skills.DEFAULT_AGENT,
     target: Path | None = None,
 ) -> tuple[Path, bool, list[str]]:
     """Create `cwd/.jtr/` and scaffold a .env inside it.
@@ -116,8 +117,8 @@ def init_project(
     Only non-empty settings are written, so a re-run that supplies just one
     value leaves the others alone rather than blanking them.
 
-    Also copies bundled Claude Code skills to `cwd/.claude/skills/`, unless
-    `install_skills` is False.
+    Also copies the bundled skill into `skill_agent`'s project skills dir
+    (`cwd/.claude/skills/` for Claude Code), unless `install_skills` is False.
     """
     target = target or (cwd / _PROJECT_DIR)
     if target.exists():
@@ -139,12 +140,14 @@ def init_project(
         if value:
             set_value(key, value)
 
-    # Copy the bundled skill to ./.claude/skills/, or refresh a stale copy.
-    # Optional extra: a read-only tree must not fail the whole init.
+    # Copy the bundled skill to the agent's project dir, or refresh a stale
+    # copy. Optional extra: a read-only tree must not fail the whole init.
     installed_skills = []
     if install_skills:
         try:
-            if skills.install("project", cwd) in (skills.INSTALLED, skills.UPDATED):
+            if skills.install("project", cwd, agent=skill_agent) in (
+                skills.INSTALLED, skills.UPDATED
+            ):
                 installed_skills.append(skills.SKILL_NAME)
         except OSError:
             pass
