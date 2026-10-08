@@ -2,10 +2,18 @@ name: pages
 
 # Publishes the landing page (site/) and the installers to GitHub Pages.
 # Runs after every release so the page and the scripts it hands out match
-# what was just published; can also be run by hand.
+# what was just published, and whenever the page or the installers change
+# on main; can also be run by hand.
 on:
   workflow_call:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'install.sh'
+      - 'install.ps1'
+      - '.github/workflows/pages.yml'
 
 permissions:
   contents: read
