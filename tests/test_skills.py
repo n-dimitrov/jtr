@@ -260,3 +260,20 @@ def test_init_agent_flag_skips_the_menu(project, monkeypatch):
     assert r.exit_code == 0, r.output
     assert "Which agent" not in r.output
     assert skill_md(agent="gemini").is_file()
+
+
+def test_skill_install_menu_in_a_terminal(project, monkeypatch):
+    monkeypatch.setattr("jtr.cli._stdin_is_tty", lambda: True)
+    r = run("skill", "install", "--global", input="6\n")
+    assert r.exit_code == 0, r.output
+    assert "Which agent should get the /jtr skill?" in r.output
+    assert skill_md("global", "opencode").is_file()
+    assert not skill_md("global").exists()
+    # --agent, --json, or a pipe: no menu.
+    for args, stdin in ((("--agent", "cursor"), "\n"), (("--json",), "\n")):
+        r = run("skill", "install", *args, input=stdin)
+        assert r.exit_code == 0, r.output
+        assert "Which agent" not in r.output
+    monkeypatch.setattr("jtr.cli._stdin_is_tty", lambda: False)
+    r = run("skill", "install")
+    assert "Which agent" not in r.output and skill_md().is_file()

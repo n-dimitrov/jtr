@@ -1064,7 +1064,10 @@ def skill_install(
         "its project dir (~/.claude/skills/ vs ./.claude/skills/ for Claude Code).",
     ),
     agent: str | None = typer.Option(
-        None, "--agent", help=f"Agent to install for: {_AGENT_CHOICES}. Default: claude."
+        None,
+        "--agent",
+        help=f"Agent to install for: {_AGENT_CHOICES}. Default: claude; "
+        "prompted for interactively.",
     ),
     force: bool = typer.Option(
         False, "--force", help="Replace a copy that has local edits."
@@ -1073,12 +1076,15 @@ def skill_install(
 ):
     """Install the /jtr skill for an agent, or bring an old copy up to date.
 
-    Claude Code by default; `--agent` picks Codex, Gemini CLI, Copilot,
-    Cursor or OpenCode. A copy you have edited is left alone unless
-    `--force` is given.
+    In a terminal, with no `--agent`, a menu asks which agent (Claude Code,
+    Codex, Gemini CLI, Copilot, Cursor or OpenCode); otherwise Claude Code.
+    A copy you have edited is left alone unless `--force` is given.
     """
     scope = "global" if global_ else "project"
-    agent_key = _resolve_agent(agent, json_out=json_out)
+    if agent is None and _stdin_is_tty() and not json_out:
+        agent_key = _choose_agent()
+    else:
+        agent_key = _resolve_agent(agent, json_out=json_out)
     try:
         action = skills.install(scope, agent=agent_key, force=force)
     except OSError as e:

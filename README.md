@@ -191,7 +191,8 @@ jtr auth sso                # browser SSO login — required for SSO-gated track
 `jtr init` drops the `/jtr` skill into `./.claude/skills/` so Claude
 Code can drive jtr on your behalf — no extra install step. The same
 skill works in other agents that read the `SKILL.md` format; pick one
-with `--agent`, or from the menu `jtr init` shows in a terminal:
+with `--agent`, or from the menu that `jtr init` and `jtr skill install`
+show in a terminal when `--agent` is omitted (Enter keeps Claude Code):
 
 | `--agent` | global (`--global`) | project (default) |
 |---|---|---|
@@ -213,8 +214,9 @@ with `--agent`, or from the menu `jtr init` shows in a terminal:
 Each agent has a project and a global location:
 
 ```bash
-jtr skill install                    # this project:   ./.claude/skills/jtr
-jtr skill install --global           # every project:  ~/.claude/skills/jtr
+jtr skill install                    # asks which agent; this project
+jtr skill install --global           # asks which agent; every project
+jtr skill install --agent claude     # this project:   ./.claude/skills/jtr
 jtr skill install --agent cursor     # this project:   ./.cursor/skills/jtr
 jtr skill status                     # where it is, and whether each copy is current
 jtr skill update                     # refresh the copies that exist, for every agent
