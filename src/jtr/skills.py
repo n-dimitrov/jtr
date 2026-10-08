@@ -1,8 +1,10 @@
-"""Install and refresh the bundled `/jtr` Claude Code skill.
+"""Install and refresh the bundled `/jtr` agent skill.
 
-The skill ships inside the package and is copied to a Claude Code skills
+The skill ships inside the package and is copied to an agent's skills
 directory: `./.claude/skills/jtr` for one project, `~/.claude/skills/jtr`
-for all of them. A copy made by an older jtr goes stale when jtr itself is
+for all of them (Claude Code, the default). The same SKILL.md format is
+read by Codex, Gemini CLI, Copilot, Cursor and OpenCode, each from its own
+pair of directories — see AGENTS. A copy made by an older jtr goes stale when jtr itself is
 upgraded, so each install leaves a small manifest behind recording what was
 written. That is what lets a later run tell an untouched old copy (safe to
 replace) from one the user has edited (not ours to overwrite).
@@ -12,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -52,27 +55,81 @@ _LEGACY_DIGESTS: frozenset[str] = frozenset({
 })
 
 
+@dataclass(frozen=True)
+class Agent:
+    key: str
+    label: str
+    global_root: Callable[[], Path]  # where `skills/` lives for every project
+    local: str  # project-relative skills dir, posix
+
+
+def _home_dir(env: str, default: str) -> Callable[[], Path]:
+    def root() -> Path:
+        override = os.environ.get(env, "").strip() if env else ""
+        return Path(override).expanduser() if override else Path.home() / default
+    return root
+
+
+def _xdg_config(sub: str) -> Callable[[], Path]:
+    def root() -> Path:
+        override = os.environ.get("XDG_CONFIG_HOME", "").strip()
+        base = Path(override).expanduser() if override else Path.home() / ".config"
+        return base / sub
+    return root
+
+
+DEFAULT_AGENT = "claude"
+
+# Ordered: the menu in `jtr init` and `skill status` list them in this order.
+AGENTS: dict[str, Agent] = {
+    a.key: a
+    for a in (
+        # Claude Code honours $CLAUDE_CONFIG_DIR as a replacement for ~/.claude.
+        Agent("claude", "Claude Code", _home_dir("CLAUDE_CONFIG_DIR", ".claude"), ".claude/skills"),
+        Agent("codex", "Codex", _home_dir("", ".agents"), ".agents/skills"),
+        Agent("gemini", "Gemini CLI", _home_dir("", ".gemini"), ".gemini/skills"),
+        Agent("copilot", "GitHub Copilot", _home_dir("", ".copilot"), ".github/skills"),
+        Agent("cursor", "Cursor", _home_dir("", ".cursor"), ".cursor/skills"),
+        Agent("opencode", "OpenCode", _xdg_config("opencode"), ".opencode/skills"),
+    )
+}
+_ALIASES = {"agents": "codex"}
+
+
+def agent_names() -> list[str]:
+    return list(AGENTS)
+
+
+def resolve_agent(name: str | None) -> str:
+    """Canonical agent key for `name` (case-insensitive, aliases allowed)."""
+    key = (name or DEFAULT_AGENT).strip().lower()
+    key = _ALIASES.get(key, key)
+    if key not in AGENTS:
+        raise ValueError(
+            f"Unknown agent {name!r}. Choose one of: {', '.join(AGENTS)}."
+        )
+    return key
+
+
 @dataclass
 class SkillStatus:
+    agent: str  # key into AGENTS
     scope: str  # "project" | "global"
     path: str
     state: str  # MISSING | CURRENT | OUTDATED | MODIFIED
     version: str | None  # jtr version that wrote the copy, when known
 
 
-def project_dir(cwd: Path | None = None) -> Path:
-    return (cwd or Path.cwd()) / ".claude" / "skills" / SKILL_NAME
+def project_dir(cwd: Path | None = None, agent: str = DEFAULT_AGENT) -> Path:
+    return (cwd or Path.cwd()) / AGENTS[resolve_agent(agent)].local / SKILL_NAME
 
 
-def global_dir() -> Path:
-    # Claude Code honours $CLAUDE_CONFIG_DIR as a replacement for ~/.claude.
-    override = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
-    root = Path(override).expanduser() if override else Path.home() / ".claude"
-    return root / "skills" / SKILL_NAME
+def global_dir(agent: str = DEFAULT_AGENT) -> Path:
+    return AGENTS[resolve_agent(agent)].global_root() / "skills" / SKILL_NAME
 
 
-def scope_dir(scope: str, cwd: Path | None = None) -> Path:
-    return global_dir() if scope == "global" else project_dir(cwd)
+def scope_dir(scope: str, cwd: Path | None = None, agent: str = DEFAULT_AGENT) -> Path:
+    return global_dir(agent) if scope == "global" else project_dir(cwd, agent)
 
 
 def _walk(node, prefix: str = "") -> dict[str, bytes]:
@@ -112,10 +169,13 @@ def _read_manifest(dst: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def status(scope: str, cwd: Path | None = None) -> SkillStatus:
-    dst = scope_dir(scope, cwd)
+def status(
+    scope: str, cwd: Path | None = None, agent: str = DEFAULT_AGENT
+) -> SkillStatus:
+    agent = resolve_agent(agent)
+    dst = scope_dir(scope, cwd, agent)
     if not (dst / "SKILL.md").is_file():
-        return SkillStatus(scope, str(dst), MISSING, None)
+        return SkillStatus(agent, scope, str(dst), MISSING, None)
     manifest = _read_manifest(dst)
     present = _walk(dst)
     bundled = bundled_files()
@@ -126,22 +186,28 @@ def status(scope: str, cwd: Path | None = None) -> SkillStatus:
         return digest({rel: present[rel] for rel in names if rel in present})
 
     if have(bundled) == digest(bundled):
-        return SkillStatus(scope, str(dst), CURRENT, __version__)
+        return SkillStatus(agent, scope, str(dst), CURRENT, __version__)
     if manifest:
         pristine = have(manifest.get("files", [])) == manifest.get("digest")
     else:
         pristine = have(["SKILL.md"]) in _LEGACY_DIGESTS
     state = OUTDATED if pristine else MODIFIED
-    return SkillStatus(scope, str(dst), state, manifest.get("version"))
+    return SkillStatus(agent, scope, str(dst), state, manifest.get("version"))
 
 
-def install(scope: str, cwd: Path | None = None, *, force: bool = False) -> str:
-    """Install or refresh the skill in `scope`.
+def install(
+    scope: str,
+    cwd: Path | None = None,
+    *,
+    agent: str = DEFAULT_AGENT,
+    force: bool = False,
+) -> str:
+    """Install or refresh the skill in `scope` for `agent`.
 
     Returns INSTALLED, UPDATED, UNCHANGED, or MODIFIED — the last meaning the
     copy has local edits and was left alone because `force` wasn't set.
     """
-    before = status(scope, cwd)
+    before = status(scope, cwd, agent)
     if before.state == MODIFIED and not force:
         return MODIFIED
     dst = Path(before.path)
@@ -173,12 +239,23 @@ def install(scope: str, cwd: Path | None = None, *, force: bool = False) -> str:
 def refresh_existing(cwd: Path | None = None) -> list[dict]:
     """Bring every copy that already exists up to date; never create one.
 
-    Returns one row per existing copy: its status fields plus `action`.
+    Every agent's project and global locations are checked. Returns one
+    row per existing copy: its status fields plus `action`.
     """
     rows = []
-    for scope in ("project", "global"):
-        if status(scope, cwd).state == MISSING:
-            continue
-        action = install(scope, cwd)
-        rows.append({**asdict(status(scope, cwd)), "action": action})
+    for agent in AGENTS:
+        for scope in ("project", "global"):
+            if status(scope, cwd, agent).state == MISSING:
+                continue
+            action = install(scope, cwd, agent=agent)
+            rows.append({**asdict(status(scope, cwd, agent)), "action": action})
     return rows
+
+
+def all_statuses(cwd: Path | None = None) -> list[SkillStatus]:
+    """Status of every agent's project and global copy, in AGENTS order."""
+    return [
+        status(scope, cwd, agent)
+        for agent in AGENTS
+        for scope in ("project", "global")
+    ]

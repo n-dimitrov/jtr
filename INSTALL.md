@@ -60,10 +60,12 @@ On **Windows** a running program can't replace itself, so `jtr update`
 points you back at the installer one-liner; re-running it is the
 upgrade. Re-running the installer upgrades on every OS.
 
-Upgrading also refreshes copies of the `/jtr` Claude Code skill that an
-older jtr installed — this project's (`./.claude/skills/jtr`) and the
-global one (`~/.claude/skills/jtr`). A copy you have edited is left
-alone. `jtr skill status` shows what is installed where.
+Upgrading also refreshes copies of the `/jtr` skill that an older jtr
+installed — this project's (`./.claude/skills/jtr`) and the global one
+(`~/.claude/skills/jtr`) for Claude Code, and likewise for any other
+agent you installed it for (`jtr skill install --agent ...`). A copy you
+have edited is left alone. `jtr skill status` shows what is installed
+where.
 
 ---
 

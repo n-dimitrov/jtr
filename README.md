@@ -137,8 +137,10 @@ jtr init --ticket https://tracker.example.com/jira/browse/PROJ-123 --auth sso
 `jtr init` parses the base URL and project key out of the ticket URL
 and writes them into `./.jtr/.env` in the cwd (this is what makes the
 directory project-local — see [Storage](#storage) for the global
-alternative). It also copies the bundled `/jtr` Claude Code skill into
-`./.claude/skills/` (`--no-skills` to skip), and `--auth` then runs that
+alternative). It also copies the bundled `/jtr` skill into
+`./.claude/skills/` for Claude Code (`--no-skills` to skip; `--agent` or
+the interactive menu picks another agent — see
+[Agent integration](#agent-integration)), and `--auth` then runs that
 login immediately and remembers the choice.
 
 Run it with no arguments and it prompts for whatever it needs. Or pass
@@ -163,7 +165,8 @@ jtr init --base-url https://tracker.example.com/jira \
 | `--force` | Update an existing `./.jtr/` in place instead of failing. |
 | `--timeout <s>` | Seconds to wait for SSO (default 300). |
 | `--no-gitignore` | Don't append `.jtr/` to `./.gitignore`. |
-| `--no-skills` | Don't install (or refresh) the bundled `/jtr` Claude Code skill. |
+| `--no-skills` | Don't install (or refresh) the bundled `/jtr` skill. |
+| `--agent NAME` | Which agent gets the skill: `claude` (default), `codex`, `gemini`, `copilot`, `cursor`, `opencode`. Interactive runs ask with a menu when this is omitted. |
 | `--bare` | Config only — implies `--no-gitignore --no-skills`. |
 | `--dir <path>` | Initialize `<path>/.jtr/` instead of the cwd's. |
 | `--json` | Emit the resulting config as JSON, and never prompt. See [Driving jtr from another tool](#driving-jtr-from-another-tool). |
@@ -183,10 +186,21 @@ jtr config project PROJ     # default project scope (optional)
 jtr auth sso                # browser SSO login — required for SSO-gated trackers
 ```
 
-## Claude Code integration
+## Agent integration
 
 `jtr init` drops the `/jtr` skill into `./.claude/skills/` so Claude
-Code can drive jtr on your behalf — no extra install step.
+Code can drive jtr on your behalf — no extra install step. The same
+skill works in other agents that read the `SKILL.md` format; pick one
+with `--agent`, or from the menu `jtr init` shows in a terminal:
+
+| `--agent` | global (`--global`) | project (default) |
+|---|---|---|
+| `claude` (default) | `~/.claude/skills` (honours `CLAUDE_CONFIG_DIR`) | `.claude/skills` |
+| `codex` (alias `agents`) | `~/.agents/skills` | `.agents/skills` |
+| `gemini` | `~/.gemini/skills` | `.gemini/skills` |
+| `copilot` | `~/.copilot/skills` | `.github/skills` |
+| `cursor` | `~/.cursor/skills` | `.cursor/skills` |
+| `opencode` | `~/.config/opencode/skills` (honours `XDG_CONFIG_HOME`) | `.opencode/skills` |
 
 - **`/jtr`** — auto-activates when you mention Jira, a ticket key
   (`PROJ-123`), "my tickets", workflow language ("transition", "in
@@ -196,31 +210,35 @@ Code can drive jtr on your behalf — no extra install step.
   Writes require your explicit per-turn approval; Claude is
   instructed never to pass `--yes` unsolicited.
 
-The skill can live in two places:
+Each agent has a project and a global location:
 
 ```bash
-jtr skill install             # this project:   ./.claude/skills/jtr
-jtr skill install --global    # every project:  ~/.claude/skills/jtr
-jtr skill status              # where it is, and whether each copy is current
-jtr skill update              # refresh the copies that exist
+jtr skill install                    # this project:   ./.claude/skills/jtr
+jtr skill install --global           # every project:  ~/.claude/skills/jtr
+jtr skill install --agent cursor     # this project:   ./.cursor/skills/jtr
+jtr skill status                     # where it is, and whether each copy is current
+jtr skill update                     # refresh the copies that exist, for every agent
 ```
 
 The skill ships inside the jtr package, so a copy written by an older jtr
 goes stale when jtr is upgraded. `jtr update` (and the installer) refresh
-this project's copy and the global one; `jtr init` and `jtr skill update`
-do the same for the project you run them in. A copy you have edited is
-reported as `modified` and never overwritten without `--force`.
+every existing copy, project and global, for every agent; `jtr init` and
+`jtr skill update` do the same for the project you run them in. A copy
+you have edited is reported as `modified` and never overwritten without
+`--force`. `jtr skill status` always lists Claude Code's two locations and
+adds other agents only where a copy exists (`--json` lists them all).
 
 ## Commands
 
 ```
 jtr init [<ticket-url>] [--ticket <url>] [--base-url <url>] [--project KEY]
          [--auth sso|pat] [--pat <v>] [--browser CHANNEL] [--timeout N]
-         [--no-auth] [--force] [--no-gitignore] [--no-skills] [--bare]
-         [--dir <path>] [--json]           set up project-local config + auth
+         [--no-auth] [--force] [--no-gitignore] [--no-skills] [--agent NAME]
+         [--bare] [--dir <path>] [--json]  set up project-local config + auth
 jtr reset [--yes] [--json]                 delete all jtr-managed data (active dir)
 jtr update [--check] [--json]              update jtr and refresh the /jtr skill
-jtr skill install [--global] [--force] [--json]   install/refresh the Claude Code skill
+jtr skill install [--global] [--agent NAME] [--force] [--json]
+                                           install/refresh the /jtr skill for an agent
 jtr skill update [--json]                  refresh existing skill copies
 jtr skill status [--json]                  where the skill is installed, and its state
 jtr whoami [--json]                        print authenticated user
@@ -377,13 +395,15 @@ third-party tool can drive setup and verify in one round trip):
   "auth_method": "sso",
   "gitignore_updated": false,
   "skills_installed": ["jtr"],
+  "skill_agent": "claude",
   "authenticated": true
 }
 ```
 
 The PAT value is never returned by any command — only `pat_set`.
-`gitignore_updated` / `skills_installed` / `authenticated` appear on
-`init` and the `auth` commands; `config show` omits them.
+`gitignore_updated` / `skills_installed` / `skill_agent` / `authenticated`
+appear on `init` and the `auth` commands; `config show` omits them.
+`skill_agent` is `null` under `--no-skills`.
 
 ### Driving jtr from another tool
 
@@ -406,7 +426,9 @@ jtr init --ticket "$URL" --auth pat --pat "$TOKEN" --bare --json
 ```
 
 `--bare` (= `--no-gitignore --no-skills`) writes config and nothing
-else — no `/jtr` skill, no `.gitignore` edit.
+else — no `/jtr` skill, no `.gitignore` edit. Under `--json` or a
+non-TTY the agent menu is never shown; the skill goes to Claude Code
+unless `--agent` says otherwise.
 
 To place that config somewhere other than the cwd, set
 **`JTR_CONFIG_DIR`** to an absolute path. It names the config directory
@@ -560,7 +582,7 @@ src/jtr/
   views.py      Rich renderers + JSON printers for tables / detail view
   safety.py     preview / confirm / audit wrapper used by every write
   audit.py      .jtr_audit.jsonl append-only log
-  skills.py     install / refresh the bundled /jtr Claude Code skill
+  skills.py     install / refresh the bundled /jtr skill (Claude Code, Codex, ...)
   update.py     find and install newer releases (jtr update)
 site/           landing page, published to GitHub Pages with each release
 worca-jira-source/
