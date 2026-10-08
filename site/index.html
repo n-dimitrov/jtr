@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>jtr — Jira from your terminal</title>
-<meta name="description" content="jtr is a local CLI for Jira Server, Data Center and Cloud, with a /jtr skill for Claude Code, Codex, Gemini CLI, Copilot, Cursor and OpenCode. Install it with one command.">
+<meta name="description" content="Jira for you and for your coding agent. jtr is a local CLI for Jira Server, Data Center and Cloud with a skill that Claude Code, Codex, Gemini CLI, Copilot, Cursor and OpenCode can use. Reads are free; every write needs your approval.">
 <style>
   :root {
     --bg: #fbfaf7;
@@ -73,6 +73,49 @@
   .tagline { margin: 20px 0 0; font-size: 22px; line-height: 1.35; text-wrap: balance; }
   .sub { margin: 10px 0 0; color: var(--muted); max-width: 58ch; }
 
+  .agents-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 18px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .agents-row li {
+    font: 500 13px/1 var(--mono);
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 10px;
+    background: var(--surface);
+  }
+  .agents-row li.on { color: var(--accent); border-color: var(--accent); }
+  .why { margin-top: 40px; }
+  .why h2 { font-size: 18px; margin-bottom: 10px; }
+  .why ul {
+    display: grid;
+    gap: 10px 24px;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .why li { color: var(--muted); font-size: 15px; line-height: 1.5; min-width: 0; }
+  .why li strong { display: block; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
+  .chat {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 0 0 14px;
+    font-size: 14px;
+    line-height: 1.6;
+    overflow-x: auto;
+  }
+  .chat pre { margin: 0; white-space: pre; }
+  .chat .you { color: var(--code-prompt); }
+  .chat .ag { color: var(--code-dim); }
+  .chat .ok { color: var(--code-prompt); }
   section { margin-top: 56px; }
   h2 {
     display: flex;
@@ -206,9 +249,21 @@
       <h1><span>$</span> jtr</h1>
       <a class="version" id="version" href="https://github.com/n-dimitrov/jtr/releases/latest">v__VERSION__</a>
     </div>
-    <p class="tagline">Jira from your terminal, and from your coding agent.</p>
-    <p class="sub">A local CLI for Jira Server, Data Center and Cloud. List, search, view, create, comment and transition tickets. Every write is previewed, confirmed and logged.</p>
+    <p class="tagline">Jira for you, and for your coding agent.</p>
+    <p class="sub">One local CLI for Jira Server, Data Center and Cloud. You use it from the terminal. Your coding agent uses it through a shared skill. Reads are free. Every write is previewed, needs your approval, and is logged.</p>
+    <ul class="agents-row" aria-label="Agents that can use the skill">
+      <li class="on">Claude Code</li><li>Codex</li><li>Gemini CLI</li><li>Copilot</li><li>Cursor</li><li>OpenCode</li>
+    </ul>
   </header>
+
+  <section class="why" aria-labelledby="why-h">
+    <h2 id="why-h">Why a skill, not another integration</h2>
+    <ul>
+      <li><strong>Your agent already knows Jira.</strong> Ask "what's assigned to me?" or "move PROJ-123 to In Progress" in the chat you have open. No MCP server to run, no API key pasted into an agent config.</li>
+      <li><strong>Writes are gated.</strong> The skill tells the agent to show every change first and never pass <code>--yes</code> unasked. The CLI previews, confirms and audits the same way, so the agent can't do more than you could.</li>
+      <li><strong>One file, every agent.</strong> The same <code>SKILL.md</code> installs into whichever agent you use, and <code>jtr update</code> keeps every copy fresh.</li>
+    </ul>
+  </section>
 
   <section id="install">
     <h2><span class="step">1</span>Install</h2>
@@ -259,6 +314,14 @@
 
   <section id="skill">
     <h2><span class="step">3</span>Use it from your coding agent</h2>
+    <div class="chat" aria-label="Example exchange with an agent">
+      <pre><span class="you">you    </span>move PROJ-123 to In Progress
+<span class="ag">agent  </span>PROJ-123  Fix login redirect   Open → In Progress
+<span class="ag">       </span>I'll run: jtr transition PROJ-123 "In Progress"
+<span class="ag">       </span>Go ahead?  <span class="ok">waiting for your ok</span>
+<span class="you">you    </span>yes
+<span class="ag">agent  </span>Done. Audit: transition PROJ-123 → In Progress  <span class="ok">ok:true</span></pre>
+    </div>
     <p>The <code>/jtr</code> skill is one <code>SKILL.md</code> that every agent below can read. <code>jtr init</code> installs it for the agent you pick. <code>jtr skill install</code> adds it anywhere else, and asks the same question when you leave out <code>--agent</code>.</p>
     <div class="tabs agents" role="tablist" aria-label="Coding agent">
       <button role="tab" id="tab-claude" aria-controls="panel-claude" aria-selected="true">Claude Code</button>
@@ -364,6 +427,7 @@
     <a href="https://github.com/n-dimitrov/jtr#readme">Documentation</a>
     <a href="https://github.com/n-dimitrov/jtr/blob/main/EXAMPLES.md">Examples</a>
     <a href="https://github.com/n-dimitrov/jtr/releases">Releases</a>
+    <a href="https://github.com/n-dimitrov/jtr/blob/main/src/jtr/bundled_skills/jtr/SKILL.md">What the agent is told (SKILL.md)</a>
   </footer>
 </main>
 
